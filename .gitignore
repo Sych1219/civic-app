@@ -1,0 +1,22 @@
+# Python cache / artifacts
+__pycache__/
+*.py[cod]
+*.so
+*.dylib
+
+# Virtual environments
+.venv/
+venv/
+
+# Environment / config
+.env
+.python-version
+
+# Build / packaging
+build/
+dist/
+*.egg-info/
+
+# IDE settings
+.idea/
+.vscode/
