@@ -1,5 +1,5 @@
 """
-Utility classes (fetchers, validators, registry client) for the Gov API workflow.
+Utility classes (text normalization, validators, registry client) for the Gov API workflow.
 """
 from __future__ import annotations
 
@@ -10,8 +10,6 @@ from dataclasses import dataclass
 from typing import Iterable, List, Optional
 
 import httpx
-from bs4 import BeautifulSoup
-from readability import Document
 from pydantic import BaseModel, Field, HttpUrl, ValidationError, field_validator, model_validator
 
 logger = logging.getLogger(__name__)
@@ -86,42 +84,38 @@ class GovApiSchemaValidator:
             raise ContractValidationError(exc.errors(include_url=False, include_context=True)) from exc
 
 
-class DocumentFetcher:
+class TextNormalizer:
     """
-    Retrieves HTML/PDF documentation and converts it into clean markdown.
+    Cleans raw user-pasted API text before chunking.
+
+    This is intentionally lightweight: it trims surrounding whitespace and
+    collapses runs of blank lines to reduce obvious copy/paste noise.
     """
-
-    def __init__(
-        self,
-        timeout: float = 20.0,
-        max_bytes: int = 2_000_000,
-        user_agent: str = "civic-app-fetcher/0.1 (+https://civic.example.com)",
-    ):
-        self._timeout = timeout
-        self._max_bytes = max_bytes
-        self._client = httpx.Client(timeout=timeout, headers={"User-Agent": user_agent})
-
-    def fetch(self, url: str) -> str:
-        response = self._client.get(url)
-        response.raise_for_status()
-        if len(response.content) > self._max_bytes:
-            raise ValueError(f"Document exceeds max download size ({self._max_bytes} bytes)")
-        return self._html_to_text(response.text, base_url=url)
 
     @staticmethod
-    def _html_to_text(html: str, base_url: str) -> str:
-        readable_html = Document(html, url=base_url).summary()
-        soup = BeautifulSoup(readable_html, "html.parser")
-        for script in soup(["script", "style"]):
-            script.decompose()
-        lines = [line.strip() for line in soup.get_text(separator="\n").splitlines()]
-        text = "\n".join(line for line in lines if line)
-        return text
+    def normalize(text: str) -> str:
+        if not text:
+            return ""
+        # Normalize newlines and strip leading/trailing whitespace.
+        normalized = text.replace("\r\n", "\n").replace("\r", "\n").strip()
+        # Collapse multiple blank lines.
+        lines = [line.rstrip() for line in normalized.split("\n")]
+        collapsed: List[str] = []
+        blank_streak = 0
+        for line in lines:
+            if line.strip():
+                blank_streak = 0
+                collapsed.append(line)
+            else:
+                blank_streak += 1
+                if blank_streak == 1:
+                    collapsed.append("")
+        return "\n".join(collapsed)
 
 
 class TextChunker:
     """
-    Splits documentation text into roughly 2k token chunks with slight overlaps.
+    Splits normalized API text into roughly 2k token chunks with slight overlaps.
     """
 
     def __init__(self, chunk_size: int = 4000, overlap: int = 400):

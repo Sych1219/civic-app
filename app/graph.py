@@ -15,12 +15,12 @@ from langsmith.run_helpers import traceable
 from app.state import GovApiState, GraphConfig
 from app.tools import (
     ContractValidationError,
-    DocumentFetcher,
     GovApiContract,
     GovApiRegistryClient,
     GovApiSchemaValidator,
     PromptBuilder,
     TextChunker,
+    TextNormalizer,
 )
 
 logger = logging.getLogger(__name__)
@@ -44,14 +44,14 @@ class GovApiGraphFactory:
     def __init__(
         self,
         *,
-        fetcher: DocumentFetcher | None = None,
+        normalizer: TextNormalizer | None = None,
         chunker: TextChunker | None = None,
         prompt_builder: PromptBuilder | None = None,
         validator: GovApiSchemaValidator | None = None,
         registry_client: GovApiRegistryClient | None = None,
         llm: ChatOpenAI | None = None,
     ):
-        self.fetcher = fetcher or DocumentFetcher()
+        self.normalizer = normalizer or TextNormalizer()
         self.chunker = chunker or TextChunker()
         self.prompt_builder = prompt_builder or PromptBuilder()
         self.validator = validator or GovApiSchemaValidator()
@@ -67,14 +67,14 @@ class GovApiGraphFactory:
 
     def compile(self):
         graph = StateGraph(GovApiState)
-        graph.add_node("fetch_document", self._fetch_document)
+        graph.add_node("normalize_text", self._normalize_text)
         graph.add_node("chunk_context", self._chunk_context)
         graph.add_node("draft_contract", self._draft_contract)
         graph.add_node("validate_contract", self._validate_contract)
         graph.add_node("register_contract", self._register_contract)
 
-        graph.set_entry_point("fetch_document")
-        graph.add_edge("fetch_document", "chunk_context")
+        graph.set_entry_point("normalize_text")
+        graph.add_edge("normalize_text", "chunk_context")
         graph.add_edge("chunk_context", "draft_contract")
         graph.add_edge("draft_contract", "validate_contract")
         graph.add_conditional_edges(
@@ -88,18 +88,15 @@ class GovApiGraphFactory:
         graph.add_edge("register_contract", END)
         return graph.compile()
 
-    @traceable(name="gov.fetch_document")
-    def _fetch_document(self, state: GovApiState) -> GovApiState:
-        url = state.get("request_url")
-        if not url:
-            return _with_error(state, "request_url is required to start the workflow.")
-        try:
-            document = self.fetcher.fetch(url)
-        except Exception as exc:
-            logger.exception("Failed to fetch %s", url)
-            return _with_error(state, f"Failed to fetch documentation: {exc}")
+    @traceable(name="gov.normalize_text")
+    def _normalize_text(self, state: GovApiState) -> GovApiState:
+        source_text = state.get("source_text")
+        if not source_text:
+            return _with_error(state, "source_text is required to start the workflow.")
+        document = self.normalizer.normalize(source_text)
         metadata = dict(state.get("metadata", {}))
-        metadata["source_bytes"] = len(document)
+        metadata["source_chars"] = len(source_text)
+        metadata["normalized_chars"] = len(document)
         return {"cleaned_document": document, "metadata": metadata}
 
     @traceable(name="gov.chunk_context")

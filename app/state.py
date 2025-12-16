@@ -13,8 +13,8 @@ class GovApiState(TypedDict, total=False):
     Keys are optional because LangGraph nodes progressively add data.
     """
 
-    request_url: str
-    """URL provided by the operator that hosts the API documentation."""
+    source_text: str
+    """Raw API-related text pasted by the operator (copied from web docs, blogs, PDFs, etc.)."""
 
     cleaned_document: str
     """Reduced, reader-friendly representation of the fetched documentation."""
