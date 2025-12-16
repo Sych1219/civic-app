@@ -1,7 +1,7 @@
 # Web Page ➜ Gov API Registration Design
 
 ## 1. Problem & Context
-Internal operations teams currently discover external government APIs by browsing public docs. Translating those docs into a structured registration (name, base URL, method, headers, parameters) is manual, slow, and inconsistent. We want a chat workflow where the user drops a URL to the API documentation. The system fetches and distills that page, feeds it to an LLM, and the LLM drafts the payload required by our `POST /api/v1/gov/apis` endpoint. The operator can review/edit, then submit to persist the contract for downstream ingestion jobs.
+Internal operations teams currently discover external government APIs by browsing public docs. Translating those docs into a structured registration (name, base URL, method, headers, parameters) is manual, slow, and inconsistent. We want a chat workflow where the user pastes text from the web that describes an API (from a docs page, blog, PDF, or snippet). The system normalizes and segments that text, feeds it to an LLM, and the LLM drafts the payload required by our `POST /api/v1/gov/apis` endpoint. The operator can review/edit, then submit to persist the contract for downstream ingestion jobs.
 
 ## 2. Goals / Non-goals
 - Capture full invocation contract (URL, method, headers, query, body schemas, description) for any gov public API.
@@ -10,8 +10,8 @@ Internal operations teams currently discover external government APIs by browsin
 - Non-goal: actually calling the external APIs or verifying credentials; this feature ends at registration.
 
 ## 3. High-level Flow
-1. **User Input** – operator pastes a documentation URL into chat.
-2. **Document Fetcher** – backend loads and normalizes HTML, strips scripts/noise, converts to text chunks (Readability or similar).
+1. **User Input** – operator pastes API-related text into chat (copied from docs, blogs, PDFs, or other web content).
+2. **Text Normalizer** – backend trims, cleans, and lightly re-formats the pasted text (remove excessive whitespace, markup artifacts), then converts to text chunks.
 3. **Context Builder** – summarize/cluster chunks, extract sections like endpoint table, sample request/response, auth requirements.
 4. **LLM Orchestrator** – prompt template injects:
    - Canonical contract schema (see §6)
@@ -23,8 +23,7 @@ Internal operations teams currently discover external government APIs by browsin
 8. **Confirmation** – display success info or validation/conflict errors for operator to resolve.
 
 ## 4. Components
-- **Fetcher Service**: resilient HTTP client with retry, user-agent rotation, HTML→Markdown converter (e.g., `readability-lxml`). Enforces max download size and fallback to PDF/JSON scraping if needed.
-- **Text Chunker**: splits cleaned text into ~2k token segments, tags metadata (heading path, code block vs prose).
+- **Text Normalizer & Chunker**: accepts user-pasted text, removes obvious noise (copy/paste artifacts, HTML remnants), and splits cleaned text into ~2k token segments; tags metadata (heading path, code block vs prose).
 - **LLM Prompt Engine**: 
   - Base system prompt describing role: “You convert API documentation into registration payloads.”
   - Few-shot examples covering GET/POST, nested filters, headers.
@@ -32,7 +31,7 @@ Internal operations teams currently discover external government APIs by browsin
 - **Schema Validator**: uses `jsonschema` to validate fields, enforce enumerations (e.g., `httpMethod` in [`GET`,`POST`,`PUT`,`DELETE`]) and ensure `baseUrl` starts with `https://`.
 - **Gov API Registry Client**: wraps REST call, handles retries on 5xx, surfaces 400 validation and 409 conflict with user-friendly explanation.
 - **Storage**: reuses existing registry persistence; no new DB tables needed beyond API contract stored by backend.
-- **Observability**: log prompt, truncated doc snippets, validation failures; metrics on doc fetch success/failure, LLM completion errors, registry responses.
+- **Observability**: log prompt, truncated pasted snippets, validation failures; metrics on LLM completion errors and registry responses.
 
 ## 5. Request / Response Contract
 ### Request `POST /api/v1/gov/apis`
@@ -99,23 +98,23 @@ Requirements:
 - Headers list should always include Accept if docs specify response type.
 - Represent nested filters via children array.
 
-User: <cleaned API doc text chunk(s)>
+User: <cleaned API-related text chunk(s) pasted by operator>
 ```
 Use re-ranking to keep only sections mentioning endpoints, authentication, parameters, sample requests, rate limits. If docs provide multiple endpoints, prefer the one matching user intent (ask follow-up if ambiguous).
 
 ## 8. Error Handling
-- **Doc fetch failure**: show actionable message and allow user to paste raw text.
+- **Insufficient or ambiguous text**: prompt user to paste a larger or more specific snippet, or ask clarifying questions about which endpoint they care about.
 - **LLM parsing failure**: re-prompt with stricter instructions or smaller chunk.
 - **Validation**: highlight field-specific issues (e.g., baseUrl not https) before hitting backend.
 - **Conflict 409**: surface existing registration and offer to edit/duplicate.
 
 ## 9. Testing Strategy
-- Unit tests for fetcher (HTML → text), schema validator, prompt builder.
+- Unit tests for normalizer/chunker (pasted text → cleaned segments), schema validator, prompt builder.
 - Contract tests hitting dev endpoint (`http://localhost:8080/api/v1/gov/apis`) with mock payloads.
-- E2E smoke: simulate user URL paste → confirm registry entry created.
+- E2E smoke: simulate user pasting API-related text → confirm registry entry created.
 - Manual test for conflict scenario to ensure proper UX guidance.
 
 ## 10. Open Questions
 1. Which LLM (GPT-4o, Claude, internal) best balances accuracy vs cost?
 2. Do we need human approval workflow for sensitive headers (API keys) before persisting?
-3. Should we cache scraped doc text for faster re-prompting?
+3. Should we cache user-pasted API text per conversation for faster re-prompting and incremental refinement?
