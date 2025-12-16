@@ -122,9 +122,13 @@ class GovApiGraphFactory:
         human_message = self.prompt_builder.build(chunks)
         chain = self.prompt | self.llm | self.parser
         try:
-            contract: GovApiContract = chain.invoke(
+            # contract: GovApiContract = chain.invoke(
+            #     {"system_message": system_message, "human_message": human_message}
+            # )
+            raw = chain.invoke(
                 {"system_message": system_message, "human_message": human_message}
             )
+            contract = GovApiContract.model_validate(raw)
         except Exception as exc:
             logger.exception("LLM invocation failed")
             return _with_error(state, f"LLM invocation failed: {exc}")
