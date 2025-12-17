@@ -29,7 +29,10 @@ class Parameter(BaseModel):
     type: str = Field(..., description="STRING, INTEGER, FLOAT, BOOLEAN, OBJECT, or ARRAY")
     description: str
     exampleValue: Optional[str] = None
-    children: List["Parameter"] = Field(default_factory=list)
+    children: Optional[List["Parameter"]] = Field(
+        default=None,
+        description="Nested parameters for OBJECT types; omit when empty.",
+    )
 
     @field_validator("type")
     @classmethod
@@ -38,6 +41,20 @@ class Parameter(BaseModel):
         if upper not in ALLOWED_PARAM_TYPES:
             raise ValueError(f"type must be one of {sorted(ALLOWED_PARAM_TYPES)}, got {value}")
         return upper
+
+    @field_validator("children", mode="before")
+    @classmethod
+    def normalize_empty_children(cls, value):
+        if value == []:
+            return None
+        return value
+
+    @model_validator(mode="after")
+    def validate_children(self):
+        """Only OBJECT parameters can declare children, and only when non-empty."""
+        if self.type != "OBJECT" and self.children:
+            raise ValueError(f"{self.type} parameters cannot define children")
+        return self
 
 
 Parameter.model_rebuild()
@@ -48,8 +65,12 @@ class GovApiContract(BaseModel):
     baseUrl: HttpUrl
     httpMethod: str
     headers: List[Header] = Field(default_factory=list)
-    queryParams: List[Parameter] = Field(default_factory=list)
-    bodyParams: List[Parameter] = Field(default_factory=list)
+    queryParams: Optional[List[Parameter]] = Field(
+        default=None, description="Omit entirely if the endpoint has no query parameters."
+    )
+    bodyParams: Optional[List[Parameter]] = Field(
+        default=None, description="Omit entirely if the endpoint has no body parameters."
+    )
     description: str
 
     @field_validator("httpMethod")
@@ -59,6 +80,13 @@ class GovApiContract(BaseModel):
         if normalized not in ALLOWED_METHODS:
             raise ValueError(f"httpMethod must be one of {sorted(ALLOWED_METHODS)}, got {value}")
         return normalized
+
+    @field_validator("queryParams", "bodyParams")
+    @classmethod
+    def validate_param_lists(cls, value: Optional[List[Parameter]]):
+        if value is not None and len(value) == 0:
+            raise ValueError("query/body parameters must be omitted or contain at least one entry")
+        return value
 
     @model_validator(mode="after")
     def enforce_https(self):
