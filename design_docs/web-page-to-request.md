@@ -85,7 +85,7 @@ Internal operations teams currently discover external government APIs by browsin
 - `name`: non-empty string, unique per `baseUrl`.
 - `baseUrl`: must be public HTTPS endpoint; apply regex `^https://[A-Za-z0-9.-]+.*`.
 - `httpMethod`: enum GET/POST/PUT/PATCH/DELETE (LLM prompt should default to GET).
-- `headers`: array of `{key,value}`; sensitive values (API keys) masked in UI logs but stored encrypted by backend.
+- `headers`: array of `{key,value}`; sensitive values (API keys) masked in UI logs but stored encrypted by backend. If docs show placeholder secrets (e.g., `YOUR_SECRET_TOKEN`, `YOUR_API_KEY`), do not copy the literal placeholder—set the value to a TODO hint (e.g., `"TODO_SUPPLY_API_KEY"`) or omit the header entirely if no real value is available.
 - `queryParams` / `bodyParams` share schema: `key`, `type` (STRING, INTEGER, FLOAT, BOOLEAN, OBJECT, ARRAY), `description`, optional `exampleValue`, optional recursive `children` for nested structures.
   Only include `children` when the `type` is `OBJECT` and it actually has nested fields; otherwise omit the `children` property entirely so primitives and empty objects never serialize `"children": []`.
   When an endpoint has no query or body parameters, omit the corresponding field rather than emitting an empty list—`queryParams`/`bodyParams` must either contain at least one entry or be absent.
