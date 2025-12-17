@@ -17,11 +17,18 @@ logger = logging.getLogger(__name__)
 HTTPS_PATTERN = re.compile(r"^https://[A-Za-z0-9.-]+.*")
 ALLOWED_METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE"}
 ALLOWED_PARAM_TYPES = {"STRING", "INTEGER", "FLOAT", "BOOLEAN", "OBJECT", "ARRAY"}
+PLACEHOLDER_SECRET_PATTERN = re.compile(r"\bYOUR[-_A-Z0-9]*\b", re.IGNORECASE)
 
 
 class Header(BaseModel):
     key: str
     value: str
+
+    @model_validator(mode="after")
+    def drop_placeholder(self):
+        if PLACEHOLDER_SECRET_PATTERN.search(self.value):
+            raise ValueError("Headers with placeholder secrets must be omitted entirely")
+        return self
 
 
 class Parameter(BaseModel):
@@ -200,7 +207,8 @@ class PromptBuilder:
 
     guardrails: str = (
         "You convert government API documentation into registry payloads. Follow the schema exactly. "
-        "Use HTTPS base URLs, uppercase HTTP verbs, and include Accept headers when the docs specify response types."
+        "Use HTTPS base URLs, uppercase HTTP verbs, include Accept headers when the docs specify response types, "
+        "and omit headers when the docs only show placeholder secrets such as YOUR_API_KEY."
     )
 
     def build(self, chunks: Iterable[str]) -> str:
