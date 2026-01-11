@@ -1,21 +1,175 @@
 """
-Placeholder router graph that could pick which agent/graph to run based on intent.
+Router graph that picks which agent to run based on chat intent.
+
+Heuristics:
+- If the chat is about registering an API (e.g., "register this API", metadata.intent == "register"),
+  route to RegisterAgent.
+- Otherwise, attempt to satisfy the user's ask by searching the catalog and then triggering an API:
+  build a catalog query from the chat text, call ApiCatalogAgent, pick the first matching api id,
+  and invoke ApiTriggerAgent (defaulting to useExampleDefaults when no runtime payload is provided).
 """
 from __future__ import annotations
 
+from typing import Any, Dict, List
+
 from langgraph.graph import END, StateGraph
 
+from langchain_openai import ChatOpenAI
+
+from app.agents.api_catalog_agent import ApiCatalogAgent
+from app.agents.api_trigger_agent import ApiTriggerAgent
+from app.agents.register_agent import RegisterAgent
 from app.shared.state import GovApiState
 
 
 class RouterGraphFactory:
+    def __init__(
+        self,
+        *,
+        register_agent: RegisterAgent | None = None,
+        catalog_agent: ApiCatalogAgent | None = None,
+        trigger_agent: ApiTriggerAgent | None = None,
+        llm: ChatOpenAI | None = None,
+    ):
+        self.register_agent = register_agent or RegisterAgent()
+        self.catalog_agent = catalog_agent or ApiCatalogAgent()
+        self.trigger_agent = trigger_agent or ApiTriggerAgent()
+        self.llm = llm or ChatOpenAI(model="gpt-4o-mini", temperature=0)
+
     def compile(self):
         graph = StateGraph(GovApiState)
-        # Placeholder node that simply ends; real routing would inspect state/intent.
-        graph.add_node("noop_router", lambda state: state)
-        graph.set_entry_point("noop_router")
-        graph.add_edge("noop_router", END)
+
+        graph.add_node("classify_intent", self._classify_intent)
+        graph.add_node("route", lambda state: state)
+        graph.add_node("prepare_catalog_query", self._prepare_catalog_query)
+        graph.add_node("prepare_trigger_input", self._prepare_trigger_input)
+        graph.add_node("register_agent", self.register_agent.run)
+        graph.add_node("api_catalog_agent", self.catalog_agent.run)
+        graph.add_node("api_trigger_agent", self.trigger_agent.run)
+
+        graph.set_entry_point("classify_intent")
+        graph.add_edge("classify_intent", "route")
+
+        graph.add_conditional_edges(
+            "route",
+            self._choose_path,
+            {
+                "register": "register_agent",
+                "invoke": "prepare_catalog_query",
+            },
+        )
+        graph.add_edge("prepare_catalog_query", "api_catalog_agent")
+        graph.add_edge("api_catalog_agent", "prepare_trigger_input")
+        graph.add_edge("prepare_trigger_input", "api_trigger_agent")
+        graph.add_edge("register_agent", END)
+        graph.add_edge("api_trigger_agent", END)
         return graph.compile()
+
+    def _classify_intent(self, state: GovApiState) -> GovApiState:
+        """
+        Uses an LLM to choose between register vs invoke paths.
+        """
+
+        metadata: Dict[str, Any] = dict(state.get("metadata") or {})
+        # Honor explicit overrides if provided.
+        if metadata.get("intent"):
+            return {"metadata": metadata}
+
+        user_text = (state.get("source_text") or "").strip()
+        if not user_text:
+            return {"metadata": metadata}
+
+        system = (
+            "Classify the user's request for routing.\n"
+            "Return exactly one of: REGISTER or INVOKE.\n"
+            "REGISTER means the user wants to add/register a new API.\n"
+            "INVOKE means the user wants to call/trigger an existing API to fetch data.\n"
+            "Respond with only the label, nothing else."
+        )
+        try:
+            completion = self.llm.invoke([("system", system), ("user", user_text)])
+            label = str(completion.content).strip().lower()
+            if "register" in label:
+                metadata["intent"] = "register"
+            elif "invoke" in label or "trigger" in label or "call" in label:
+                metadata["intent"] = "invoke"
+        except Exception:
+            # Fall back to downstream heuristics if LLM fails.
+            pass
+
+        return {"metadata": metadata}
+
+    @staticmethod
+    def _choose_path(state: GovApiState) -> str:
+        """Lightweight intent heuristic based on metadata.intent or chat text."""
+        metadata = state.get("metadata") or {}
+        intent = str(metadata.get("intent") or "").lower()
+        if intent in {"register", "registration"}:
+            return "register"
+        if intent in {"invoke", "trigger", "call"}:
+            return "invoke"
+
+        text = (state.get("source_text") or "").lower()
+        register_keywords = ("register", "add api", "new api", "create api")
+        if any(keyword in text for keyword in register_keywords):
+            return "register"
+        return "invoke"
+
+    @staticmethod
+    def _prepare_catalog_query(state: GovApiState) -> GovApiState:
+        """
+        Seed catalog_query from chat text if caller did not supply one.
+        """
+
+        metadata: Dict[str, Any] = dict(state.get("metadata") or {})
+        catalog_query: Dict[str, Any] = dict(metadata.get("catalog_query") or {})
+        if not catalog_query.get("description"):
+            source_text = (state.get("source_text") or "").strip()
+            if source_text:
+                catalog_query["description"] = source_text[:200]
+        metadata["catalog_query"] = catalog_query
+        return {"metadata": metadata}
+
+    @staticmethod
+    def _prepare_trigger_input(state: GovApiState) -> GovApiState:
+        """
+        Choose an api_id from the catalog response when one is not provided,
+        and ensure the trigger payload has a minimal request shape.
+        """
+
+        metadata: Dict[str, Any] = dict(state.get("metadata") or {})
+        trigger: Dict[str, Any] = dict(metadata.get("trigger") or {})
+
+        if not trigger.get("api_id") and not trigger.get("apiId"):
+            catalog_response = state.get("catalog_response") or {}
+            api_ids: List[str] = []
+
+            if isinstance(catalog_response, dict):
+                for key in ("id", "apiId"):
+                    if catalog_response.get(key):
+                        api_ids.append(str(catalog_response[key]))
+
+                for container_key in ("content", "items", "results", "data", "apis"):
+                    items = catalog_response.get(container_key)
+                    if isinstance(items, list):
+                        for item in items:
+                            if isinstance(item, dict):
+                                candidate = item.get("id") or item.get("apiId")
+                                if candidate:
+                                    api_ids.append(str(candidate))
+
+            if api_ids:
+                trigger["api_id"] = api_ids[0]
+
+        # If no payload provided, default to useExampleDefaults=True to minimize runtime inputs.
+        has_explicit_payload = trigger.get("request") or any(
+            key in trigger for key in ("query", "body", "headerOverrides", "useExampleDefaults")
+        )
+        if not has_explicit_payload:
+            trigger["request"] = {"useExampleDefaults": True}
+
+        metadata["trigger"] = trigger
+        return {"metadata": metadata}
 
 
 def create_router_graph():
