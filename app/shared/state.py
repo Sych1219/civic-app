@@ -21,6 +21,8 @@ class GovApiState(TypedDict, total=False):
     validation_errors: List[str]
     registry_response: Dict[str, Any]
     catalog_response: Dict[str, Any]
+    trigger_response: Dict[str, Any]
+    trigger_request: Dict[str, Any]
     auto_register: bool
     metadata: Dict[str, Any]
 

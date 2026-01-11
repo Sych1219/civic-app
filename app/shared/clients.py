@@ -5,12 +5,13 @@ from __future__ import annotations
 
 import json
 import logging
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import httpx
 
 from app.shared.models import GovApiContract
 from app.shared.catalog import GovApiCatalogQuery
+from app.shared.trigger import GovApiTriggerPayload
 
 logger = logging.getLogger(__name__)
 
@@ -77,3 +78,43 @@ class GovApiRegistryClient:
         if isinstance(payload, dict) and "requestId" not in payload:
             payload["requestId"] = response.headers.get("X-Request-Id", request_id)
         return payload
+
+    def trigger_api(
+        self,
+        *,
+        api_id: UUID | str,
+        payload: GovApiTriggerPayload,
+        dry_run: bool = False,
+        request_id: str | None = None,
+    ) -> dict:
+        """
+        Calls POST /api/v1/gov/apis/{apiId}/trigger with validated payload.
+        """
+
+        url = f"{self._base_url}/{api_id}/trigger"
+        payload_dict = payload.to_payload()
+        header_request_id = (payload.headerOverrides or {}).get("X-Request-Id")
+        final_request_id = request_id or header_request_id or str(uuid4())
+        headers = {"X-Request-Id": final_request_id}
+
+        if dry_run:
+            logger.info("Dry-run mode: skipping trigger POST to %s", url)
+            return {
+                "status": "DRY_RUN",
+                "apiId": str(api_id),
+                "payload": payload_dict,
+                "requestId": final_request_id,
+                "url": url,
+            }
+
+        response = self._client.post(url, json=payload_dict, headers=headers)
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            logger.error("Trigger call failed for %s with %s: %s", api_id, exc.response.status_code, exc.response.text)
+            raise
+
+        body = response.json()
+        if isinstance(body, dict) and "requestId" not in body:
+            body["requestId"] = response.headers.get("X-Request-Id", final_request_id)
+        return body

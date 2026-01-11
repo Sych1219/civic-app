@@ -7,6 +7,7 @@ from app.graphs.conflict_resolution import (
 )
 from app.graphs.catalog import CatalogGraphFactory, create_catalog_graph
 from app.graphs.router import RouterGraphFactory, create_router_graph
+from app.graphs.trigger import TriggerGraphFactory, create_trigger_graph
 
 __all__ = [
     "RegistrationGraphFactory",
@@ -17,4 +18,6 @@ __all__ = [
     "create_catalog_graph",
     "RouterGraphFactory",
     "create_router_graph",
+    "TriggerGraphFactory",
+    "create_trigger_graph",
 ]
