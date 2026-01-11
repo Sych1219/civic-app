@@ -58,16 +58,14 @@ class TriggerSummaryAgent:
             fallback_parts.append(f"message={message}")
         fallback = " | ".join(fallback_parts) or "Trigger completed."
 
-        # LLM prompt to translate JSON to a readable message aligned with catalog/trigger schema.
+        user_query = (state.get("source_text") or "").strip()
+        # LLM prompt to translate JSON and user query into a readable message aligned with catalog/trigger schema.
         prompt = (
-            "You are a helpful assistant that summarizes trigger results for registered government APIs.\n"
-            "Given the JSON payload below, produce a short, user-friendly message that includes:\n"
-            "- overall status or error\n"
-            "- apiId (if present)\n"
-            "- upstream/external HTTP status (if present)\n"
-            "- requestId (if present)\n"
-            "- any message/description returned\n"
-            "Keep it concise (1-2 sentences). Do not invent data.\n\n"
+            "You are summarizing a trigger call to a registered government API for a human reader.\n"
+            "Use the trigger JSON payload and the original user question to craft a concise answer.\n"
+            "If the response body answers the user's question, mention it briefly. Do not invent data.\n"
+            "Limit to 1-5 sentences.\n\n"
+            f"User question:\n{user_query or '(not provided)'}\n\n"
             f"Trigger response JSON:\n{json.dumps(trigger_response, indent=2)}\n\n"
             "Summary:"
         )
