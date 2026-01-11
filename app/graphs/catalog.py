@@ -1,5 +1,8 @@
 """
 Placeholder graph for API catalog discovery flows.
+
+It compiles a single-step LangGraph that hands `metadata.catalog_query` to ApiCatalogAgent,
+which calls the registry's GET /api/v1/gov/apis to list/search registered government APIs.
 """
 from __future__ import annotations
 
