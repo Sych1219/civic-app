@@ -115,23 +115,19 @@ class RouterGraphFactory:
             return "register"
         return "invoke"
 
-    @staticmethod
-    def _prepare_catalog_query(state: GovApiState) -> GovApiState:
+    def _prepare_catalog_query(self, state: GovApiState) -> GovApiState:
         """
-        Seed catalog_query from chat text if caller did not supply one.
+        Build a broad catalog_query when none is provided so we can LLM-rank candidates.
         """
 
         metadata: Dict[str, Any] = dict(state.get("metadata") or {})
         catalog_query: Dict[str, Any] = dict(metadata.get("catalog_query") or {})
-        if not catalog_query.get("description"):
-            source_text = (state.get("source_text") or "").strip()
-            if source_text:
-                catalog_query["description"] = source_text[:200]
+        if not catalog_query:
+            catalog_query = {"page": 0, "size": 100}
         metadata["catalog_query"] = catalog_query
         return {"metadata": metadata}
 
-    @staticmethod
-    def _prepare_trigger_input(state: GovApiState) -> GovApiState:
+    def _prepare_trigger_input(self, state: GovApiState) -> GovApiState:
         """
         Choose an api_id from the catalog response when one is not provided,
         and ensure the trigger payload has a minimal request shape.
@@ -142,24 +138,10 @@ class RouterGraphFactory:
 
         if not trigger.get("api_id") and not trigger.get("apiId"):
             catalog_response = state.get("catalog_response") or {}
-            api_ids: List[str] = []
-
-            if isinstance(catalog_response, dict):
-                for key in ("id", "apiId"):
-                    if catalog_response.get(key):
-                        api_ids.append(str(catalog_response[key]))
-
-                for container_key in ("content", "items", "results", "data", "apis"):
-                    items = catalog_response.get(container_key)
-                    if isinstance(items, list):
-                        for item in items:
-                            if isinstance(item, dict):
-                                candidate = item.get("id") or item.get("apiId")
-                                if candidate:
-                                    api_ids.append(str(candidate))
-
-            if api_ids:
-                trigger["api_id"] = api_ids[0]
+            candidates = self._extract_candidates(catalog_response)
+            best = self._select_best_candidate(candidates, state.get("source_text") or "")
+            if best:
+                trigger["api_id"] = best
 
         # If no payload provided, default to useExampleDefaults=True to minimize runtime inputs.
         has_explicit_payload = trigger.get("request") or any(
@@ -170,6 +152,71 @@ class RouterGraphFactory:
 
         metadata["trigger"] = trigger
         return {"metadata": metadata}
+
+    @staticmethod
+    def _extract_candidates(catalog_response: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Flatten possible catalog response shapes into a list of candidates with id/name/description."""
+        candidates: List[Dict[str, Any]] = []
+
+        def add_item(item: Dict[str, Any]):
+            api_id = item.get("id") or item.get("apiId")
+            if not api_id:
+                return
+            candidates.append(
+                {
+                    "id": str(api_id),
+                    "name": item.get("name") or item.get("title") or "",
+                    "description": item.get("description") or item.get("summary") or "",
+                    "method": item.get("httpMethod") or item.get("method") or "",
+                    "baseUrl": item.get("baseUrl") or "",
+                }
+            )
+
+        if isinstance(catalog_response, dict):
+            for key in ("content", "items", "results", "data", "apis"):
+                items = catalog_response.get(key)
+                if isinstance(items, list):
+                    for item in items:
+                        if isinstance(item, dict):
+                            add_item(item)
+            # Handle singleton shape
+            add_item(catalog_response)
+        return candidates
+
+    def _select_best_candidate(self, candidates: List[Dict[str, Any]], user_text: str) -> str | None:
+        """Use LLM similarity to pick the best api_id; fallback to first candidate."""
+        if not candidates:
+            return None
+        if not user_text:
+            return candidates[0]["id"]
+
+        lines = [f"User request: {user_text}", "Candidates:"]
+        for idx, c in enumerate(candidates, start=1):
+            lines.append(
+                f"{idx}. id={c['id']} name={c['name']} method={c['method']} url={c['baseUrl']} desc={c['description']}"
+            )
+        lines.append(
+            "Pick the best matching candidate for the user request. "
+            "Respond with the candidate id only (do not include any other text)."
+        )
+        prompt = "\n".join(lines)
+
+        try:
+            completion = self.llm.invoke(prompt)
+            content = str(completion.content).strip()
+            # If model returned an index instead of id, map it.
+            if content.isdigit():
+                idx = int(content) - 1
+                if 0 <= idx < len(candidates):
+                    return candidates[idx]["id"]
+            # Otherwise, try to match id substring
+            for c in candidates:
+                if c["id"] in content:
+                    return c["id"]
+            # Fallback to first on unexpected output
+            return candidates[0]["id"]
+        except Exception:
+            return candidates[0]["id"]
 
 
 def create_router_graph():
