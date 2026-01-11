@@ -20,6 +20,7 @@ class GovApiState(TypedDict, total=False):
     contract: Dict[str, Any]
     validation_errors: List[str]
     registry_response: Dict[str, Any]
+    catalog_response: Dict[str, Any]
     auto_register: bool
     metadata: Dict[str, Any]
 
