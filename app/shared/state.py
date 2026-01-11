@@ -23,6 +23,7 @@ class GovApiState(TypedDict, total=False):
     catalog_response: Dict[str, Any]
     trigger_response: Dict[str, Any]
     trigger_request: Dict[str, Any]
+    trigger_summary: str
     auto_register: bool
     metadata: Dict[str, Any]
 

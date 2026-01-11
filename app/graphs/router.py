@@ -19,6 +19,7 @@ from langchain_openai import ChatOpenAI
 from app.agents.api_catalog_agent import ApiCatalogAgent
 from app.agents.api_trigger_agent import ApiTriggerAgent
 from app.agents.register_agent import RegisterAgent
+from app.agents.trigger_summary_agent import TriggerSummaryAgent
 from app.shared.state import GovApiState
 
 
@@ -29,11 +30,13 @@ class RouterGraphFactory:
         register_agent: RegisterAgent | None = None,
         catalog_agent: ApiCatalogAgent | None = None,
         trigger_agent: ApiTriggerAgent | None = None,
+        trigger_summary_agent: TriggerSummaryAgent | None = None,
         llm: ChatOpenAI | None = None,
     ):
         self.register_agent = register_agent or RegisterAgent()
         self.catalog_agent = catalog_agent or ApiCatalogAgent()
         self.trigger_agent = trigger_agent or ApiTriggerAgent()
+        self.trigger_summary_agent = trigger_summary_agent or TriggerSummaryAgent()
         self.llm = llm or ChatOpenAI(model="gpt-4o-mini", temperature=0)
 
     def compile(self):
@@ -46,6 +49,7 @@ class RouterGraphFactory:
         graph.add_node("register_agent", self.register_agent.run)
         graph.add_node("api_catalog_agent", self.catalog_agent.run)
         graph.add_node("api_trigger_agent", self.trigger_agent.run)
+        graph.add_node("trigger_summary_agent", self.trigger_summary_agent.run)
 
         graph.set_entry_point("classify_intent")
         graph.add_edge("classify_intent", "route")
@@ -61,8 +65,9 @@ class RouterGraphFactory:
         graph.add_edge("prepare_catalog_query", "api_catalog_agent")
         graph.add_edge("api_catalog_agent", "prepare_trigger_input")
         graph.add_edge("prepare_trigger_input", "api_trigger_agent")
+        graph.add_edge("api_trigger_agent", "trigger_summary_agent")
         graph.add_edge("register_agent", END)
-        graph.add_edge("api_trigger_agent", END)
+        graph.add_edge("trigger_summary_agent", END)
         return graph.compile()
 
     def _classify_intent(self, state: GovApiState) -> GovApiState:
