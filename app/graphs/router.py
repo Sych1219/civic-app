@@ -77,12 +77,7 @@ class RouterGraphFactory:
 
         metadata: Dict[str, Any] = dict(state.get("metadata") or {})
         # Honor explicit overrides if provided.
-        if metadata.get("intent"):
-            return {"metadata": metadata}
-
         user_text = (state.get("source_text") or "").strip()
-        if not user_text:
-            return {"metadata": metadata}
 
         system = (
             "Classify the user's request for routing.\n"
@@ -96,7 +91,7 @@ class RouterGraphFactory:
             label = str(completion.content).strip().lower()
             if "register" in label:
                 metadata["intent"] = "register"
-            elif "invoke" in label or "trigger" in label or "call" in label:
+            elif "invoke" in label:
                 metadata["intent"] = "invoke"
         except Exception:
             # Fall back to downstream heuristics if LLM fails.
