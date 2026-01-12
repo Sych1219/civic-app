@@ -76,28 +76,30 @@ class RouterGraphFactory:
         metadata: Dict[str, Any] = dict(state.get("metadata") or {})
         intent = str(metadata.get("intent") or "").lower()
 
-        if intent not in {"register", "invoke"}:
-            user_text = (state.get("source_text") or "").strip()
-            system = (
-                "Classify the user's request for routing.\n"
-                "Return exactly one of: REGISTER or INVOKE.\n"
-                "REGISTER means the user wants to add/register a new API.\n"
-                "INVOKE means the user wants to call/trigger an existing API to fetch data.\n"
-                "Respond with only the label, nothing else."
-            )
-            try:
-                completion = self.llm.invoke([("system", system), ("user", user_text)])
-                label = str(completion.content).strip().lower()
-                if "register" in label:
-                    intent = "register"
-                elif "invoke" in label:
-                    intent = "invoke"
-            except Exception:
+        user_text = (state.get("source_text") or "").strip()
+        system = (
+            "Classify the user's request for routing.\n"
+            "Return exactly one of: REGISTER or INVOKE.\n"
+            "REGISTER means the user wants to add/register a new API.\n"
+            "INVOKE means the user wants to call/trigger an existing API to fetch data.\n"
+            "Respond with only the label, nothing else."
+        )
+        try:
+            completion = self.llm.invoke([("system", system), ("user", user_text)])
+            label = str(completion.content).strip().lower()
+            if "register" in label:
+                intent = "register"
+            elif "invoke" in label:
                 intent = "invoke"
+            else:
+                intent = "invoke"
+        except Exception:
+            intent = "invoke"
 
-        metadata["intent"] = intent or "invoke"
+        metadata["intent"] = intent
         state["metadata"] = metadata
-        return "register" if intent == "register" else "invoke"
+        
+        return intent
 
     def _prepare_catalog_query(self, state: GovApiState) -> GovApiState:
         """
