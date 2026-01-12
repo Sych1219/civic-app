@@ -42,7 +42,6 @@ class RouterGraphFactory:
     def compile(self):
         graph = StateGraph(GovApiState)
 
-        graph.add_node("classify_intent", self._classify_intent)
         graph.add_node("route", lambda state: state)
         graph.add_node("prepare_catalog_query", self._prepare_catalog_query)
         graph.add_node("prepare_trigger_input", self._prepare_trigger_input)
@@ -51,8 +50,7 @@ class RouterGraphFactory:
         graph.add_node("api_trigger_agent", self.trigger_agent.run)
         graph.add_node("trigger_summary_agent", self.trigger_summary_agent.run)
 
-        graph.set_entry_point("classify_intent")
-        graph.add_edge("classify_intent", "route")
+        graph.set_entry_point("route")
 
         graph.add_conditional_edges(
             "route",
@@ -70,50 +68,36 @@ class RouterGraphFactory:
         graph.add_edge("trigger_summary_agent", END)
         return graph.compile()
 
-    def _classify_intent(self, state: GovApiState) -> GovApiState:
+    def _choose_path(self, state: GovApiState) -> str:
         """
-        Uses an LLM to choose between register vs invoke paths.
+        Decide register vs invoke using an LLM (or existing metadata intent). Defaults to invoke.
         """
 
         metadata: Dict[str, Any] = dict(state.get("metadata") or {})
-        # Honor explicit overrides if provided.
-        user_text = (state.get("source_text") or "").strip()
-
-        system = (
-            "Classify the user's request for routing.\n"
-            "Return exactly one of: REGISTER or INVOKE.\n"
-            "REGISTER means the user wants to add/register a new API.\n"
-            "INVOKE means the user wants to call/trigger an existing API to fetch data.\n"
-            "Respond with only the label, nothing else."
-        )
-        try:
-            completion = self.llm.invoke([("system", system), ("user", user_text)])
-            label = str(completion.content).strip().lower()
-            if "register" in label:
-                metadata["intent"] = "register"
-            elif "invoke" in label:
-                metadata["intent"] = "invoke"
-        except Exception:
-            # Fall back to downstream heuristics if LLM fails.
-            pass
-
-        return {"metadata": metadata}
-
-    @staticmethod
-    def _choose_path(state: GovApiState) -> str:
-        """Lightweight intent heuristic based on metadata.intent or chat text."""
-        metadata = state.get("metadata") or {}
         intent = str(metadata.get("intent") or "").lower()
-        if intent in {"register", "registration"}:
-            return "register"
-        if intent in {"invoke", "trigger", "call"}:
-            return "invoke"
 
-        text = (state.get("source_text") or "").lower()
-        register_keywords = ("register", "add api", "new api", "create api")
-        if any(keyword in text for keyword in register_keywords):
-            return "register"
-        return "invoke"
+        if intent not in {"register", "invoke"}:
+            user_text = (state.get("source_text") or "").strip()
+            system = (
+                "Classify the user's request for routing.\n"
+                "Return exactly one of: REGISTER or INVOKE.\n"
+                "REGISTER means the user wants to add/register a new API.\n"
+                "INVOKE means the user wants to call/trigger an existing API to fetch data.\n"
+                "Respond with only the label, nothing else."
+            )
+            try:
+                completion = self.llm.invoke([("system", system), ("user", user_text)])
+                label = str(completion.content).strip().lower()
+                if "register" in label:
+                    intent = "register"
+                elif "invoke" in label:
+                    intent = "invoke"
+            except Exception:
+                intent = "invoke"
+
+        metadata["intent"] = intent or "invoke"
+        state["metadata"] = metadata
+        return "register" if intent == "register" else "invoke"
 
     def _prepare_catalog_query(self, state: GovApiState) -> GovApiState:
         """
