@@ -32,12 +32,14 @@ Short note on how the router graph decides between registering a new API vs invo
 - Returns `{"metadata": updated_metadata}` so only metadata is mutated.
 
 ## Selecting and preparing trigger inputs (`_prepare_trigger_input`)
-- If `metadata.trigger.api_id`/`apiId` is missing, flatten `state.catalog_response` via `_extract_candidates` (looks for `content/items/results/data/apis` or a singleton) and keep id/name/description/method/baseUrl + headers/queryParams/bodyParams from the catalog prototype (`design_docs/data-gov-apis-definations/list-gov-api.md` shape).
-- `_select_best_candidate` uses an LLM to rank candidates against `source_text`; if the model returns an index, it maps it; otherwise looks for an id substring. Falls back to the first candidate or `None` when empty.
-- When no explicit trigger payload is supplied, `_draft_trigger_payload` asks an LLM to map the user ask onto the chosen prototype and return `query/body/headerOverrides/useExampleDefaults` JSON. If drafting fails, fallback is `{"useExampleDefaults": True}` to keep triggers runnable.
+- Catalog flattening: `_extract_candidates` scans `content/items/results/data/apis` (plus singleton) and preserves the prototype fields from `design_docs/data-gov-apis-definations/list-gov-api.md`: `id/name/description/method/baseUrl/headers/queryParams/bodyParams`.
+- Picking the API: `_select_best_candidate` uses an LLM against `source_text`; index responses are mapped, id substrings are accepted, otherwise fallback to first candidate.
+- Drafting payloads: if the caller did not supply `metadata.trigger.request` (or query/body/headerOverrides/useExampleDefaults), `_draft_trigger_payload` prompts an LLM with the user ask + chosen prototype and expects JSON for `query/body/headerOverrides/useExampleDefaults`. Best-effort JSON extraction is applied; on failure, fallback is `{"useExampleDefaults": True}`.
+- Supplied `api_id` handling: even when `api_id` is given up front, the router will try to match it to a catalog candidate to give the LLM a prototype for drafting. If no match is found, it falls back to `useExampleDefaults`.
 
 ## Error and safety considerations
-- LLM calls are wrapped in `try/except`; routing falls back to invoke, candidate selection falls back to the first option.
+- LLM calls are wrapped in `try/except`; routing falls back to invoke, candidate selection falls back to the first option, payload drafting falls back to `useExampleDefaults`.
+- LLM JSON is parsed best-effort (handles fenced output) before passing to `ApiTriggerAgent` validation.
 - Agents themselves add to `validation_errors` on validation/IO issues (`ApiCatalogAgent`, `ApiTriggerAgent`).
 - Trigger agent supports `dry_run` via `GraphConfig`; router passes through config untouched.
 
