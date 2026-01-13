@@ -55,7 +55,7 @@ class GovApiState(TypedDict, total=False):
     registry_response: Dict[str, Any]
     catalog_response: GovApiListResponse
     trigger_response: Dict[str, Any]
-    trigger_request: Dict[str, Any]
+    trigger_request: GovApiListItem
     trigger_summary: str
     auto_register: bool
     metadata: Dict[str, Any]

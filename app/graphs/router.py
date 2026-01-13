@@ -20,7 +20,7 @@ from app.agents.api_catalog_agent import ApiCatalogAgent
 from app.agents.api_trigger_agent import ApiTriggerAgent
 from app.agents.register_agent import RegisterAgent
 from app.agents.trigger_summary_agent import TriggerSummaryAgent
-from app.shared.state import GovApiState
+from app.shared.state import GovApiState, GovApiListItem
 
 
 class RouterGraphFactory:
@@ -124,10 +124,10 @@ class RouterGraphFactory:
 
         if not trigger.get("api_id") and not trigger.get("apiId"):
             catalog_response = state.get("catalog_response") or {}
-            candidates = self._extract_candidates(catalog_response)
+            candidates: List[GovApiListItem] = self._extract_candidates(catalog_response)
             best = self._select_best_candidate(candidates, state.get("source_text") or "")
             if best:
-                trigger["api_id"] = best
+                trigger["api_id"] = best["id"]
 
         # If no payload provided, default to useExampleDefaults=True to minimize runtime inputs.
         has_explicit_payload = trigger.get("request") or any(
@@ -140,9 +140,9 @@ class RouterGraphFactory:
         return {"metadata": metadata}
 
     @staticmethod
-    def _extract_candidates(catalog_response: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def _extract_candidates(catalog_response: Dict[str, Any]) -> List[GovApiListItem]:
         """Flatten possible catalog response shapes into a list of candidates with id/name/description."""
-        candidates: List[Dict[str, Any]] = []
+        candidates: List[GovApiListItem] = []
 
         def add_item(item: Dict[str, Any]):
             api_id = item.get("id") or item.get("apiId")
@@ -169,12 +169,12 @@ class RouterGraphFactory:
             add_item(catalog_response)
         return candidates
 
-    def _select_best_candidate(self, candidates: List[Dict[str, Any]], user_text: str) -> str | None:
-        """Use LLM similarity to pick the best api_id; fallback to first candidate."""
+    def _select_best_candidate(self, candidates: List[GovApiListItem], user_text: str) -> GovApiListItem | None:
+        """Use LLM similarity to pick the best candidate; fallback to first candidate."""
         if not candidates:
             return None
         if not user_text:
-            return candidates[0]["id"]
+            return candidates[0]
 
         lines = [f"User request: {user_text}", "Candidates:"]
         for idx, c in enumerate(candidates, start=1):
@@ -194,15 +194,15 @@ class RouterGraphFactory:
             if content.isdigit():
                 idx = int(content) - 1
                 if 0 <= idx < len(candidates):
-                    return candidates[idx]["id"]
+                    return candidates[idx]
             # Otherwise, try to match id substring
             for c in candidates:
                 if c["id"] in content:
-                    return c["id"]
+                    return c
             # Fallback to first on unexpected output
-            return candidates[0]["id"]
+            return candidates[0]
         except Exception:
-            return candidates[0]["id"]
+            return candidates[0]
 
 
 def create_router_graph():
