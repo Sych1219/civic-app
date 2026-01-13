@@ -10,6 +10,7 @@ Heuristics:
 """
 from __future__ import annotations
 
+import json
 from typing import Any, Dict, List
 
 from langgraph.graph import END, StateGraph
@@ -121,6 +122,7 @@ class RouterGraphFactory:
 
         metadata: Dict[str, Any] = dict(state.get("metadata") or {})
         trigger: Dict[str, Any] = dict(metadata.get("trigger") or {})
+        selected_candidate: GovApiListItem | None = None
 
         if not trigger.get("api_id") and not trigger.get("apiId"):
             catalog_response = state.get("catalog_response") or {}
@@ -128,13 +130,27 @@ class RouterGraphFactory:
             best = self._select_best_candidate(candidates, state.get("source_text") or "")
             if best:
                 trigger["api_id"] = best["id"]
+                selected_candidate = best
+        else:
+            # If the caller supplied an api_id, still try to fetch its catalog shape for payload drafting.
+            catalog_response = state.get("catalog_response") or {}
+            candidates: List[GovApiListItem] = self._extract_candidates(catalog_response)
+            api_id = trigger.get("api_id") or trigger.get("apiId")
+            if api_id:
+                selected_candidate = next((c for c in candidates if c.get("id") == str(api_id)), None)
 
         # If no payload provided, default to useExampleDefaults=True to minimize runtime inputs.
         has_explicit_payload = trigger.get("request") or any(
             key in trigger for key in ("query", "body", "headerOverrides", "useExampleDefaults")
         )
         if not has_explicit_payload:
-            trigger["request"] = {"useExampleDefaults": True}
+            drafted = self._draft_trigger_payload(selected_candidate, state.get("source_text") or "")
+            if drafted:
+                # Ensure we still allow defaults when LLM leaves gaps.
+                drafted.setdefault("useExampleDefaults", True)
+                trigger["request"] = drafted
+            else:
+                trigger["request"] = {"useExampleDefaults": True}
 
         metadata["trigger"] = trigger
         return {"metadata": metadata}
@@ -155,7 +171,10 @@ class RouterGraphFactory:
                     "description": item.get("description") or item.get("summary") or "",
                     "method": item.get("httpMethod") or item.get("method") or "",
                     "baseUrl": item.get("baseUrl") or "",
-                }
+                    "headers": item.get("headers") or [],
+                    "queryParams": item.get("queryParams") or [],
+                    "bodyParams": item.get("bodyParams") or [],
+                 }
             )
 
         if isinstance(catalog_response, dict):
@@ -203,6 +222,80 @@ class RouterGraphFactory:
             return candidates[0]
         except Exception:
             return candidates[0]
+
+    def _draft_trigger_payload(self, candidate: GovApiListItem | None, user_text: str) -> Dict[str, Any] | None:
+        """
+        Use the catalog prototype + user ask to draft trigger payload fields.
+        """
+
+        if not candidate or not user_text:
+            return None
+
+        # Keep only fields that describe how to call the API.
+        api_shape = {
+            "id": candidate.get("id"),
+            "name": candidate.get("name"),
+            "description": candidate.get("description"),
+            "method": candidate.get("method"),
+            "baseUrl": candidate.get("baseUrl"),
+            "headers": candidate.get("headers") or [],
+            "queryParams": candidate.get("queryParams") or [],
+            "bodyParams": candidate.get("bodyParams") or [],
+        }
+
+        prompt = (
+            "You are preparing a trigger payload for a registered government API.\n"
+            "Use ONLY the provided contract fields. Fill values from the user request when possible, "
+            "otherwise leave the field out and rely on example defaults.\n"
+            "Top-level keys allowed: query (object), body (object), headerOverrides (object), useExampleDefaults (boolean).\n"
+            "Respect types and nesting: if a param has children, represent it as an object with those child keys.\n"
+            "Do not invent API IDs or paths. Keep responses compact JSON only.\n\n"
+            f"User request:\n{user_text}\n\n"
+            f"API contract:\n{json.dumps(api_shape, indent=2)}\n\n"
+            "Return the payload JSON (no prose):"
+        )
+
+        try:
+            completion = self.llm.invoke(prompt)
+            payload = self._parse_payload_json(str(completion.content).strip())
+            if isinstance(payload, dict):
+                allowed_keys = {"query", "body", "headerOverrides", "useExampleDefaults"}
+                return {k: v for k, v in payload.items() if k in allowed_keys}
+        except Exception:
+            return None
+        return None
+
+    @staticmethod
+    def _parse_payload_json(text: str) -> Dict[str, Any] | None:
+        """Best-effort JSON extraction from model output."""
+
+        if not text:
+            return None
+
+        candidates: List[str] = [text]
+        if "```" in text:
+            for part in text.split("```"):
+                stripped = part.strip()
+                if not stripped:
+                    continue
+                if stripped.startswith("json"):
+                    stripped = stripped[4:].strip()
+                candidates.append(stripped)
+
+        for candidate in candidates:
+            snippet = candidate
+            if "{" in candidate and "}" in candidate:
+                start = candidate.find("{")
+                end = candidate.rfind("}")
+                if end > start:
+                    snippet = candidate[start : end + 1]
+            try:
+                parsed = json.loads(snippet)
+                if isinstance(parsed, dict):
+                    return parsed
+            except Exception:
+                continue
+        return None
 
 
 def create_router_graph():

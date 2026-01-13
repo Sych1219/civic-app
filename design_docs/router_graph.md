@@ -18,7 +18,7 @@ Short note on how the router graph decides between registering a new API vs invo
 3. **invoke** path:
    - `prepare_catalog_query`: ensure a broad query exists; defaults to `{"page": 0, "size": 100}` when missing.
    - `api_catalog_agent`: calls registry `list_apis`.
-   - `prepare_trigger_input`: choose an `api_id` and ensure a minimal trigger payload.
+   - `prepare_trigger_input`: choose an `api_id` and draft a trigger payload from the catalog prototype + user ask.
    - `api_trigger_agent`: POST trigger call.
    - `trigger_summary_agent`: summarize the trigger result → `END`.
 
@@ -32,9 +32,9 @@ Short note on how the router graph decides between registering a new API vs invo
 - Returns `{"metadata": updated_metadata}` so only metadata is mutated.
 
 ## Selecting and preparing trigger inputs (`_prepare_trigger_input`)
-- If `metadata.trigger.api_id`/`apiId` is missing, flatten `state.catalog_response` via `_extract_candidates` (looks for `content/items/results/data/apis` or a singleton) and keep id/name/description/method/baseUrl.
+- If `metadata.trigger.api_id`/`apiId` is missing, flatten `state.catalog_response` via `_extract_candidates` (looks for `content/items/results/data/apis` or a singleton) and keep id/name/description/method/baseUrl + headers/queryParams/bodyParams from the catalog prototype (`design_docs/data-gov-apis-definations/list-gov-api.md` shape).
 - `_select_best_candidate` uses an LLM to rank candidates against `source_text`; if the model returns an index, it maps it; otherwise looks for an id substring. Falls back to the first candidate or `None` when empty.
-- If no payload is provided under `metadata.trigger`, injects `request: {"useExampleDefaults": True}` so triggers run with example defaults instead of failing for missing inputs.
+- When no explicit trigger payload is supplied, `_draft_trigger_payload` asks an LLM to map the user ask onto the chosen prototype and return `query/body/headerOverrides/useExampleDefaults` JSON. If drafting fails, fallback is `{"useExampleDefaults": True}` to keep triggers runnable.
 
 ## Error and safety considerations
 - LLM calls are wrapped in `try/except`; routing falls back to invoke, candidate selection falls back to the first option.
