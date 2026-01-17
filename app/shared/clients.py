@@ -9,8 +9,9 @@ from uuid import UUID, uuid4
 
 import httpx
 
-from app.shared.models import GovApiContract
 from app.shared.catalog import GovApiCatalogQuery
+from app.shared.models import GovApiContract
+from app.shared.responses import GovApiListResponse
 from app.shared.trigger import GovApiTriggerPayload
 
 logger = logging.getLogger(__name__)
@@ -48,7 +49,7 @@ class GovApiRegistryClient:
         query: GovApiCatalogQuery | None = None,
         dry_run: bool = False,
         request_id: str | None = None,
-    ) -> dict:
+    ) -> GovApiListResponse:
         """
         Calls GET /api/v1/gov/apis with validated, extensible query parameters.
         """
@@ -57,10 +58,6 @@ class GovApiRegistryClient:
         params = query.to_query_params()
         request_id = request_id or str(uuid4())
         headers = {"X-Request-Id": request_id}
-
-        if dry_run:
-            logger.info("Dry-run mode: skipping GET to %s", self._base_url)
-            return {"status": "DRY_RUN", "params": params, "requestId": request_id}
 
         response = self._client.get(self._base_url, params=params, headers=headers)
         try:
@@ -77,7 +74,24 @@ class GovApiRegistryClient:
         # Surface correlation id to downstream agents regardless of server behavior.
         if isinstance(payload, dict) and "requestId" not in payload:
             payload["requestId"] = response.headers.get("X-Request-Id", request_id)
-        return payload
+
+        # Validate and normalize to the documented response contract
+        try:
+            return GovApiListResponse.model_validate(payload)
+        except Exception as exc:
+            # If the body doesn't match the expected schema, still return it for visibility
+            logger.warning("Unexpected response schema from registry list endpoint: %s", payload)
+            # Surface raw payload in the message field to keep return type consistent
+            return GovApiListResponse(
+                items=[],
+                page=query.page,
+                size=query.size,
+                totalItems=0,
+                totalPages=0,
+                requestId=request_id,
+                error="SCHEMA_MISMATCH",
+                message=str(payload),
+            )
 
     def trigger_api(
         self,
