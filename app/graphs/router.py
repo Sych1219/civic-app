@@ -5,7 +5,7 @@ Heuristics:
 - If the chat is about registering an API (e.g., "register this API", metadata.intent == "register"),
   route to RegisterAgent.
 - Otherwise, attempt to satisfy the user's ask by searching the catalog and then triggering an API:
-  build a catalog query from the chat text, call ApiCatalogAgent, pick the first matching api id,
+  build a catalog query from the chat text, call ApiCatalogService, pick the first matching api id,
   and invoke ApiTriggerAgent (defaulting to useExampleDefaults when no runtime payload is provided).
 """
 from __future__ import annotations
@@ -17,7 +17,7 @@ from langgraph.graph import END, StateGraph
 
 from langchain_openai import ChatOpenAI
 
-from app.agents.api_catalog_agent import ApiCatalogAgent
+from app.agents.api_catalog_service import ApiCatalogService
 from app.agents.api_trigger_agent import ApiTriggerAgent
 from app.agents.register_agent import RegisterAgent
 from app.agents.trigger_summary_agent import TriggerSummaryAgent
@@ -29,13 +29,13 @@ class RouterGraphFactory:
         self,
         *,
         register_agent: RegisterAgent | None = None,
-        catalog_agent: ApiCatalogAgent | None = None,
+        catalog_service: ApiCatalogService | None = None,
         trigger_agent: ApiTriggerAgent | None = None,
         trigger_summary_agent: TriggerSummaryAgent | None = None,
         llm: ChatOpenAI | None = None,
     ):
         self.register_agent = register_agent or RegisterAgent()
-        self.catalog_agent = catalog_agent or ApiCatalogAgent()
+        self.catalog_service = catalog_service or ApiCatalogService()
         self.trigger_agent = trigger_agent or ApiTriggerAgent()
         self.trigger_summary_agent = trigger_summary_agent or TriggerSummaryAgent()
         self.llm = llm or ChatOpenAI(model="gpt-4o-mini", temperature=0)
@@ -47,7 +47,7 @@ class RouterGraphFactory:
         graph.add_node("prepare_catalog_query", self._prepare_catalog_query)
         graph.add_node("prepare_trigger_input", self._prepare_trigger_input)
         graph.add_node("register_agent", self.register_agent.run)
-        graph.add_node("api_catalog_agent", self.catalog_agent.run)
+        graph.add_node("api_catalog_service", self.catalog_service.run)
         graph.add_node("api_trigger_agent", self.trigger_agent.run)
         graph.add_node("trigger_summary_agent", self.trigger_summary_agent.run)
 
@@ -61,8 +61,8 @@ class RouterGraphFactory:
                 "invoke": "prepare_catalog_query",
             },
         )
-        graph.add_edge("prepare_catalog_query", "api_catalog_agent")
-        graph.add_edge("api_catalog_agent", "prepare_trigger_input")
+        graph.add_edge("prepare_catalog_query", "api_catalog_service")
+        graph.add_edge("api_catalog_service", "prepare_trigger_input")
         graph.add_edge("prepare_trigger_input", "api_trigger_agent")
         graph.add_edge("api_trigger_agent", "trigger_summary_agent")
         graph.add_edge("register_agent", END)
