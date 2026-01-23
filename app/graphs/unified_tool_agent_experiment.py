@@ -55,7 +55,6 @@ def _fetch_catalog_items(
     size: int = 20,
     sort: Optional[str] = None,
     id: Optional[str] = None,
-    dry_run: bool = True,
 ) -> list[GovApiListItemResponse]:
     """Plain helper so other tools can reuse catalog calls without invoking the tool wrapper."""
     try:
@@ -69,7 +68,7 @@ def _fetch_catalog_items(
         return []
 
     try:
-        response = _registry_client.list_apis(query=query_model, dry_run=dry_run)
+        response = _registry_client.list_apis(query=query_model)
     except Exception:
         return []
 
@@ -98,10 +97,9 @@ def catalog_all_tool(
     size: int = 20,
     sort: Optional[str] = None,
     id: Optional[str] = None,
-    dry_run: bool = True,
 ) -> Dict[str, Any]:
     """List/search registered government APIs; omit description to retrieve all."""
-    items = _fetch_catalog_items(page=page, size=size, sort=sort, id=id, dry_run=dry_run)
+    items = _fetch_catalog_items(page=page, size=size, sort=sort, id=id)
     candidates = [item.model_dump() for item in items]
     return {"catalog_candidates": candidates}
 

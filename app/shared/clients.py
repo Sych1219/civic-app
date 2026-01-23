@@ -47,7 +47,6 @@ class GovApiRegistryClient:
         self,
         *,
         query: GovApiCatalogQuery | None = None,
-        dry_run: bool = False,
         request_id: str | None = None,
     ) -> GovApiListResponse:
         """
