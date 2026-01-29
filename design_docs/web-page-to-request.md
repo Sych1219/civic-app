@@ -9,18 +9,14 @@ Internal operations teams currently discover external government APIs by browsin
 - Allow easy hand-off to downstream jobs that rely on this metadata.
 - Non-goal: actually calling the external APIs or verifying credentials; this feature ends at registration.
 
-## 3. High-level Flow
-1. **User Input** – operator pastes API-related text into chat (copied from docs, blogs, PDFs, or other web content).
-2. **Text Normalizer** – backend trims, cleans, and lightly re-formats the pasted text (remove excessive whitespace, markup artifacts), then converts to text chunks.
-3. **Context Builder** – summarize/cluster chunks, extract sections like endpoint table, sample request/response, auth requirements.
-4. **LLM Orchestrator** – prompt template injects:
-   - Canonical contract schema (see §6)
+## 3. High-level Flow (prompt → model → output → register)
+1. **Prompt** – operator pastes API-related text into chat, then backend normalizes/cleans it, chunks it, and builds a prompt:
    - Extracted doc text (truncated to fit window)
+   - Canonical contract schema (see §6)
    - Guardrails (HTTPS, allowed HTTP verbs, header rules)
-5. **LLM Output Parser** – JSON schema validator ensures generated payload conforms.
-6. **Review UI** – show draft payload allowing manual edits.
-7. **Registry Client** – submit payload to `POST /api/v1/gov/apis` (dev: `http://localhost:8080/api/v1/gov/apis`, prod host TBD but same path).
-8. **Confirmation** – display success info or validation/conflict errors for operator to resolve.
+2. **Model** – LLM generates a draft registry payload from the prompt.
+3. **Output** – JSON schema validator parses the LLM output, highlights errors, and surfaces a draft for Review UI edits.
+4. **Register** – submit payload to `POST /api/v1/gov/apis` (dev: `http://localhost:8080/api/v1/gov/apis`, prod host TBD but same path), then display success or validation/conflict errors.
 
 ## 4. Components
 - **Text Normalizer & Chunker**: accepts user-pasted text, removes obvious noise (copy/paste artifacts, HTML remnants), and splits cleaned text into ~2k token segments; tags metadata (heading path, code block vs prose).

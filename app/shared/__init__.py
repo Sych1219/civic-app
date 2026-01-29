@@ -14,6 +14,7 @@ from app.shared.models import (
 from app.shared.prompts import GUARDRAILS
 from app.shared.state import GovApiState, GraphConfig
 from app.shared.text import TextChunker, TextNormalizer
+from app.shared.normalization_engine import NormalizationEngine
 
 __all__ = [
     "ALLOWED_METHODS",
@@ -29,6 +30,7 @@ __all__ = [
     "Header",
     "Parameter",
     "GUARDRAILS",
+    "NormalizationEngine",
     "TextChunker",
     "TextNormalizer",
 ]
