@@ -9,6 +9,7 @@ This module provides functionality to:
 """
 from __future__ import annotations
 
+from email import parser
 import json
 import logging
 from typing import Any, Dict
@@ -17,6 +18,7 @@ from dotenv import load_dotenv
 from langchain_core.output_parsers import JsonOutputParser
 from langchain_core.prompts import PromptTemplate
 from langchain_openai import ChatOpenAI
+from prompt_toolkit import prompt
 
 from app.shared.clients import GovApiRegistryClient
 from app.shared.models import GovApiContract
@@ -47,16 +49,6 @@ Documentation:
 
 {format_instructions}
 """
-
-
-def _create_llm_prompt() -> PromptTemplate:
-    """Create a prompt template for the LLM to convert API docs to contract."""
-    return PromptTemplate.from_template(LLM_PROMPT_TEMPLATE)
-
-
-def _validate_and_clean_source_text(source_text: str) -> str:
-    """Normalize and validate the input documentation text."""
-    return (source_text or "").strip()
 
 
 def _convert_to_contract(llm_output: Any) -> GovApiContract:
@@ -101,11 +93,11 @@ def _parse_documentation_with_llm(documentation_text: str) -> tuple[Any | None, 
     Returns:
         A tuple of (parsed_output, error_message). If successful, error_message is None.
     """
+    prompt = PromptTemplate.from_template(LLM_PROMPT_TEMPLATE)
+    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
     parser = JsonOutputParser(pydantic_object=GovApiContract)
     schema_json = json.dumps(GovApiContract.model_json_schema(), indent=2)
-    prompt = _create_llm_prompt()
-    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
-
+    
     chain = prompt | llm | parser
     
     try:
@@ -161,7 +153,7 @@ def register_from_text(source_text: str) -> str:
         - Error details with validation_errors array (on failure)
     """
     # Step 1: Validate input
-    cleaned_text = _validate_and_clean_source_text(source_text)
+    cleaned_text = (source_text or "").strip()
     if not cleaned_text:
         return _create_error_response("source_text is required to register an API.")
 
