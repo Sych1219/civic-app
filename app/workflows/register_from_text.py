@@ -9,7 +9,6 @@ This module provides functionality to:
 """
 from __future__ import annotations
 
-from email import parser
 import json
 import logging
 from typing import Any, Dict
@@ -97,7 +96,7 @@ def _parse_documentation_with_llm(documentation_text: str) -> tuple[Any | None, 
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
     parser = JsonOutputParser(pydantic_object=GovApiContract)
     schema_json = json.dumps(GovApiContract.model_json_schema(), indent=2)
-    
+
     chain = prompt | llm | parser
     
     try:
