@@ -1,0 +1,37 @@
+{
+    "schemas": [
+        {
+            "id": "29d89b36-05b2-4105-949a-af523e7e33b9",
+            "description": "- Retrieved every 30 seconds from LTA's Datamall.\n- The response is a valid **GeoJSON** which you could insert into a mapping tool like Leaflet\n- As LTA does not provide any kind of metadata, the timestamp provided in the response is the scrape time\n- We recommend that this endpoint be called every minute\n- Use the `date_time` parameter to retrieve the latest available data at that moment in time\n",
+            "parameters": [
+                {
+                    "name": "date_time",
+                    "location": "query",
+                    "required": false,
+                    "type": "string",
+                    "description": "YYYY-MM-DD[T]HH:mm:ss (SGT)"
+                }
+            ]
+        },
+        {
+            "id": "3a5f2831-815b-4a0a-bbc6-38e54598c8d9",
+            "description": "**[https://api-open.data.gov.sg/v2/real-time/api/air-temperature](https://api-open.data.gov.sg/v2/real-time/api/air-temperature)**\n\n<br/>\n\n- Filter for specific date or date-time by providing `date` in query parameter.\n  - use YYYY-MM-DD format to retrieve all of the readings for that day\n  - use YYYY-MM-DDTHH:mm:ss to retrieve the latest readings at that moment in time\n  - example: `?date=2024-07-16` or `?date=2024-07-16T23:59:00`\n\n<br/>\n\n- If `date` is not provided in query parameter, API will return the latest reading\n\n<br/>\n\n- Unit of measure for readings is `°C`\n\n Use this API when users ask for temperature, weather conditions, or climate data.",
+            "parameters": [
+                {
+                    "name": "date",
+                    "location": "query",
+                    "required": false,
+                    "type": "string",
+                    "description": "Format: YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS (SGT). Example: 2024-07-16 or 2024-07-16T23:59:00"
+                },
+                {
+                    "name": "paginationToken",
+                    "location": "query",
+                    "required": false,
+                    "type": "string",
+                    "description": "Pagination token for retrieving subsequent data pages (only exists when there is a next page available for requests with date filters)"
+                }
+            ]
+        }
+    ]
+}
