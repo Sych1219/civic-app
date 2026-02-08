@@ -1,13 +1,26 @@
-beautifulsoup4>=4.12.3
-httpx>=0.27.2
-jmespath>=1.0.1
+# Core Framework
+fastapi>=0.109.0
+uvicorn>=0.27.0
+pydantic>=2.7.4
+
+# LLM & AI
 langchain>=0.3.0
+langchain-openai>=0.2.1
 langchain-community>=0.3.0
 langchain-core>=0.2.40
-langchain-openai>=0.2.1
-langchain-text-splitters>=0.3.0
 langgraph>=0.2.14
 langsmith>=0.1.87
-pydantic>=2.7.4
+
+# HTTP & API
+httpx>=0.27.2
+
+# Data Processing
+pandas>=2.0.0
+numpy>=1.24.0
+
+# Semantic Search
+scikit-learn>=1.3.0
+
+# Utilities
 python-dotenv>=1.0.1
-readability-lxml>=0.8.1
+jmespath>=1.0.1
