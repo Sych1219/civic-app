@@ -2,7 +2,7 @@
 
 from typing import Dict, Any
 import pandas as pd
-from models import QueryResponse
+from .models import QueryResponse
 
 
 class QueryBuilder:

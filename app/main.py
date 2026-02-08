@@ -12,11 +12,11 @@ import logging
 import os
 from contextlib import asynccontextmanager
 
-from models import QueryRequest, QueryResponse, HealthResponse
-from endpoint_matcher import EndpointMatcher
-from api_client import APITrigger, APIError
-from data_processor import DataProcessor
-from utils import QueryBuilder, ResponseFormatter
+from .models import QueryRequest, QueryResponse, HealthResponse
+from .endpoint_matcher import EndpointMatcher
+from .api_client import APITrigger, APIError
+from .data_processor import DataProcessor
+from .utils import QueryBuilder, ResponseFormatter
 
 # Load environment variables
 load_dotenv()
