@@ -1,8 +1,9 @@
 """Utility functions and classes for the civic app."""
 
-from typing import Dict, Any
+from typing import Dict, Any, Union
 import pandas as pd
 from .models import QueryResponse
+from .data_processor import GeoJSONProcessedResponse
 
 
 class QueryBuilder:
@@ -99,19 +100,23 @@ class QueryBuilder:
 class ResponseFormatter:
     """Format processed data into API response models."""
     
-    def format_response(self, processed_data: Dict[str, Any], user_query: str) -> QueryResponse:
+    def format_response(self, processed_data: Union[Dict[str, Any], Any], user_query: str) -> QueryResponse:
         """
         Format processed data into API response.
         
         Args:
-            processed_data: Processed data from DataProcessor
+            processed_data: Processed data from DataProcessor (dict or Pydantic model)
             user_query: Original user query
             
         Returns:
             QueryResponse with formatted data and visualization hints
         """
         
-        data_type = processed_data['data_type']
+        # Handle both Pydantic model and dict
+        if hasattr(processed_data, 'data_type'):
+            data_type = processed_data.data_type
+        else:
+            data_type = processed_data.get('data_type', 'generic')
         
         if data_type == 'geojson':
             return self.format_map_response(processed_data)
@@ -120,19 +125,34 @@ class ResponseFormatter:
         else:
             return self.format_generic_response(processed_data)
     
-    def format_map_response(self, data: Dict[str, Any]) -> QueryResponse:
+    def format_map_response(self, data: Union[Dict[str, Any], GeoJSONProcessedResponse]) -> QueryResponse:
         """
         Format GeoJSON data for map visualization.
+        Supports both temporal and static GeoJSON properties.
         
         Args:
-            data: Processed GeoJSON data
+            data: Processed GeoJSON data (can be dict or GeoJSONProcessedResponse model)
             
         Returns:
             QueryResponse with map visualization hints
         """
         
-        geojson_data = data['geojson']
-        bounds = data.get('bounds')
+        # Handle both dict and Pydantic model
+        if isinstance(data, GeoJSONProcessedResponse):
+            geojson_data = data.geojson
+            bounds = data.bounds
+            property_type = data.property_type
+            features_count = data.features_count
+            temporal_attributes = data.temporal_attributes
+            metadata = data.metadata.model_dump() if hasattr(data.metadata, 'model_dump') else data.metadata
+        else:
+            # Legacy dict format
+            geojson_data = data['geojson']
+            bounds = data.get('bounds')
+            property_type = data.get('property_type', 'static')
+            features_count = data['features_count']
+            temporal_attributes = data.get('temporal_attributes')
+            metadata = data['metadata']
         
         # Calculate map center
         if bounds:
@@ -142,16 +162,33 @@ class ResponseFormatter:
             # Default to Singapore
             center_lat, center_lon = 1.3521, 103.8198
         
+        response_data = {
+            "geojson": geojson_data,
+            "bounds": bounds,
+            "center": {"lat": center_lat, "lon": center_lon},
+            "features_count": features_count,
+            "property_type": property_type
+        }
+        
+        # Add temporal metadata if present
+        if property_type == 'temporal' and temporal_attributes:
+            # Convert Pydantic models to dicts if needed
+            if isinstance(temporal_attributes, dict):
+                response_data['temporal_attributes'] = {
+                    k: v.model_dump() if hasattr(v, 'model_dump') else v 
+                    for k, v in temporal_attributes.items()
+                }
+            else:
+                response_data['temporal_attributes'] = temporal_attributes
+        
+        # Determine visualization type based on property type
+        visualization_type = "map_temporal" if property_type == 'temporal' else "map"
+        
         return QueryResponse(
             status="success",
-            data={
-                "geojson": geojson_data,
-                "bounds": bounds,
-                "center": {"lat": center_lat, "lon": center_lon},
-                "features_count": data['features_count']
-            },
-            visualization_type="map",
-            metadata=data['metadata']
+            data=response_data,
+            visualization_type=visualization_type,
+            metadata=metadata
         )
     
     def format_time_series_response(self, data: Dict[str, Any], query: str) -> QueryResponse:

@@ -32,7 +32,7 @@ def test_various_geo_formats():
         "endpointId": "test-001"
     }
     result1 = processor.process_response(data1)
-    print(f"   ✅ Detected: {result1['data_type']}, Features: {result1['features_count']}")
+    print(f"   ✅ Detected: {result1.data_type}, Features: {result1.features_count}")
     
     # Test Case 2: Locations array with direct lat/lon
     print("\n2. Locations array with direct lat/lon:")
@@ -57,7 +57,7 @@ def test_various_geo_formats():
         "endpointId": "test-002"
     }
     result2 = processor.process_response(data2)
-    print(f"   ✅ Detected: {result2['data_type']}, Features: {result2['features_count']}")
+    print(f"   ✅ Detected: {result2.data_type}, Features: {result2.features_count}")
     
     # Test Case 3: Items with lat/lon (short form)
     print("\n3. Items array with lat/lon (short names):")
@@ -84,7 +84,7 @@ def test_various_geo_formats():
         "endpointId": "test-003"
     }
     result3 = processor.process_response(data3)
-    print(f"   ✅ Detected: {result3['data_type']}, Features: {result3['features_count']}")
+    print(f"   ✅ Detected: {result3.data_type}, Features: {result3.features_count}")
     
     # Test Case 4: Data array with embedded time series
     print("\n4. Data array with embedded time series:")
@@ -109,10 +109,10 @@ def test_various_geo_formats():
         "endpointId": "test-004"
     }
     result4 = processor.process_response(data4)
-    print(f"   ✅ Detected: {result4['data_type']}, Features: {result4['features_count']}")
-    print(f"   Property Type: {result4['property_type']}")
-    if 'temporal_attributes' in result4:
-        print(f"   Temporal Attributes: {list(result4['temporal_attributes'].keys())}")
+    print(f"   ✅ Detected: {result4.data_type}, Features: {result4.features_count}")
+    print(f"   Property Type: {result4.property_type}")
+    if result4.temporal_attributes:
+        print(f"   Temporal Attributes: {list(result4.temporal_attributes.keys())}")
     
     # Test Case 5: Results array (common API response format)
     print("\n5. Results array (common API format):")
@@ -127,7 +127,7 @@ def test_various_geo_formats():
         "endpointId": "test-005"
     }
     result5 = processor.process_response(data5)
-    print(f"   ✅ Detected: {result5['data_type']}, Features: {result5['features_count']}")
+    print(f"   ✅ Detected: {result5.data_type}, Features: {result5.features_count}")
     
     # Test Case 6: Station-based with readings (original example)
     print("\n6. Station-based with separate readings:")
@@ -157,23 +157,23 @@ def test_various_geo_formats():
         "endpointId": "test-006"
     }
     result6 = processor.process_response(data6)
-    print(f"   ✅ Detected: {result6['data_type']}, Features: {result6['features_count']}")
-    print(f"   Property Type: {result6['property_type']}")
-    if 'temporal_attributes' in result6:
-        attr_name = list(result6['temporal_attributes'].keys())[0]
-        attr_info = result6['temporal_attributes'][attr_name]
-        print(f"   Temporal: {attr_name} ({attr_info['data_points']} readings)")
+    print(f"   ✅ Detected: {result6.data_type}, Features: {result6.features_count}")
+    print(f"   Property Type: {result6.property_type}")
+    if result6.temporal_attributes:
+        attr_name = list(result6.temporal_attributes.keys())[0]
+        attr_info = result6.temporal_attributes[attr_name]
+        print(f"   Temporal: {attr_name} ({attr_info.data_points} readings)")
     
     print("\n" + "=" * 80)
     print("DETAILED OUTPUT - Test Case 2 (Direct lat/lon)")
     print("=" * 80)
-    feature = result2['geojson']['features'][0]
+    feature = result2.geojson['features'][0]
     print(json.dumps(feature, indent=2))
     
     print("\n" + "=" * 80)
     print("DETAILED OUTPUT - Test Case 4 (Embedded time series)")
     print("=" * 80)
-    feature = result4['geojson']['features'][0]
+    feature = result4.geojson['features'][0]
     print(json.dumps(feature, indent=2))
     
     print("\n" + "=" * 80)

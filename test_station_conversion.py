@@ -77,25 +77,25 @@ def test_station_to_geojson_conversion():
     print("=" * 80)
     print("CONVERSION TEST RESULTS")
     print("=" * 80)
-    print(f"\nData Type: {result['data_type']}")
-    print(f"Property Type: {result['property_type']}")
-    print(f"Features Count: {result['features_count']}")
-    print(f"Bounds: {result['bounds']}")
+    print(f"\nData Type: {result.data_type}")
+    print(f"Property Type: {result.property_type}")
+    print(f"Features Count: {result.features_count}")
+    print(f"Bounds: {result.bounds}")
     
-    if 'temporal_attributes' in result:
+    if result.temporal_attributes:
         print("\nTemporal Attributes:")
-        for attr_name, attr_info in result['temporal_attributes'].items():
+        for attr_name, attr_info in result.temporal_attributes.items():
             print(f"  - {attr_name}:")
-            print(f"    Unit: {attr_info['unit']}")
-            print(f"    Time Range: {attr_info['time_range']}")
-            print(f"    Data Points: {attr_info['data_points']}")
+            print(f"    Unit: {attr_info.unit}")
+            print(f"    Time Range: {attr_info.time_range}")
+            print(f"    Data Points: {attr_info.data_points}")
     
     print("\n" + "=" * 80)
     print("GENERATED GEOJSON (First Feature)")
     print("=" * 80)
     
-    if result['geojson']['features']:
-        first_feature = result['geojson']['features'][0]
+    if result.geojson['features']:
+        first_feature = result.geojson['features'][0]
         print(json.dumps(first_feature, indent=2))
     
     print("\n" + "=" * 80)
@@ -103,13 +103,13 @@ def test_station_to_geojson_conversion():
     print("=" * 80)
     
     # Verify structure
-    assert result['data_type'] == 'geojson', "Should be geojson type"
-    assert result['property_type'] == 'temporal', "Should be temporal type"
-    assert result['features_count'] == 2, "Should have 2 features (2 stations)"
-    assert result['bounds'] is not None, "Should have bounds"
+    assert result.data_type == 'geojson', "Should be geojson type"
+    assert result.property_type == 'temporal', "Should be temporal type"
+    assert result.features_count == 2, "Should have 2 features (2 stations)"
+    assert result.bounds is not None, "Should have bounds"
     
     # Verify GeoJSON structure
-    geojson = result['geojson']
+    geojson = result.geojson
     assert geojson['type'] == 'FeatureCollection', "Should be FeatureCollection"
     assert len(geojson['features']) == 2, "Should have 2 features"
     

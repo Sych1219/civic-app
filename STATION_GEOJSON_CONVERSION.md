@@ -4,6 +4,11 @@
 
 The data processor automatically detects and converts **ANY data containing geographic location information** into standard GeoJSON format. This enables seamless visualization of location-based data on maps, regardless of the original data structure.
 
+**Nested Structure Support:** The system checks up to **one level deep** for location data, so it can detect patterns like:
+- ✅ Top level: `{stations: [...]}`
+- ✅ One level nested: `{response: {stations: [...]}}`
+- ❌ Two levels nested: `{data: {response: {stations: [...]}}}` (too deep)
+
 ## Supported Input Formats
 
 The processor recognizes multiple patterns and field name variations:
@@ -93,12 +98,58 @@ The processor recognizes multiple patterns and field name variations:
 ## Detection Capabilities
 
 ### Supported Container Keys
+The system looks for these keys at **first or second level**:
 - `stations`
 - `locations`
 - `items`
 - `data`
 - `results`
 - `features`
+
+**Examples:**
+```json
+// ✅ First level - Direct detection
+{"stations": [...]}
+
+// ✅ Second level - Nested detection (one level deep)
+{"response": {"stations": [...]}}
+{"apiData": {"locations": [...]}}
+
+// ❌ Third level or deeper - NOT detected
+{"outer": {"inner": {"stations": [...]}}}
+```
+
+### Supported Readings Formats
+The system handles two common readings structures:
+
+**Format 1: Nested structure** (original station-based format)
+```json
+{
+  "stations": [...],
+  "readings": [
+    {
+      "timestamp": "2024-01-01T10:00:00Z",
+      "data": [
+        {"stationId": "S001", "value": 15.5}
+      ]
+    }
+  ]
+}
+```
+
+**Format 2: Flat structure** (simpler format)
+```json
+{
+  "stations": [...],
+  "readings": [
+    {
+      "stationId": "S001",
+      "timestamp": "2024-01-01T10:00:00Z",
+      "value": 15.5
+    }
+  ]
+}
+```
 
 ### Supported Coordinate Field Names
 - **Nested**: `location.latitude` & `location.longitude`
@@ -107,7 +158,7 @@ The processor recognizes multiple patterns and field name variations:
 - **Array format**: `coordinates: [lon, lat]`
 
 ### Time-Series Support
-- **Separate readings**: Linked by ID with timestamp arrays
+- **Separate readings**: Linked by ID with timestamp arrays (both formats)
 - **Embedded series**: `series` or `timeSeries` fields within items
 - **Automatic temporal property creation**: Converts to GeoJSON temporal format
 

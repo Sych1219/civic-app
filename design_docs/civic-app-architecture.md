@@ -466,8 +466,20 @@ class APIError(Exception):
 **Process:**
 1. Extract `responseBody` from API response
 2. Identify data type (time-series, geospatial, tabular)
-3. Transform data into visualization-ready format
-4. Calculate aggregations, statistics, or derived metrics
+3. **Transform non-standard formats**: Automatically convert any data with geographic locations to GeoJSON
+4. Transform data into visualization-ready format
+5. Calculate aggregations, statistics, or derived metrics
+
+**Data Structure Detection & Transformation:**
+
+The processor intelligently detects various data formats:
+- **Standard GeoJSON**: Direct processing
+- **Any geo-location data**: Automatic conversion to GeoJSON format
+  - Supports: stations, locations, items, data arrays with lat/lon
+  - Handles: nested location objects, direct coordinates, various field names
+  - Preserves: time-series data, metadata, units
+- **Pure time-series**: DataFrame processing
+- **Generic**: Passthrough with metadata
 
 **Implementation:**
 
@@ -492,6 +504,10 @@ class DataProcessor:
         # Determine processing strategy based on endpoint or data structure
         if self._is_geojson(response_body):
             return self.process_geojson(response_body, api_response)
+        elif self._has_geo_location_data(response_body):
+            # Convert any geo-location data to GeoJSON
+            geojson_data = self._convert_to_geojson(response_body)
+            return self.process_geojson(geojson_data, api_response)
         elif 'readings' in response_body or 'data' in response_body:
             return self.process_time_series(response_body, api_response)
         else:
@@ -501,6 +517,121 @@ class DataProcessor:
         """Check if data is GeoJSON format."""
         return data.get('type') in ['FeatureCollection', 'Feature']
     
+    def _has_geo_location_data(self, data: Dict) -> bool:
+        """
+        Check if data contains geographic location information.
+        
+        Detects various patterns like stations, locations, items with lat/lon.
+        \"\"\"
+        for key in ['stations', 'locations', 'items', 'data', 'results']:
+            if key in data and isinstance(data[key], list) and len(data[key]) > 0:
+                item = data[key][0]
+                # Check nested location
+                if 'location' in item and isinstance(item['location'], dict):
+                    loc = item['location']
+                    if 'latitude' in loc and 'longitude' in loc:
+                        return True
+                # Check direct lat/lon
+                if ('latitude' in item and 'longitude' in item) or ('lat' in item and 'lon' in item):
+                    return True
+        return False
+    
+    def _convert_to_geojson(self, data: Dict) -> Dict:
+        \"\"\"
+        Convert any geographic location data to GeoJSON format.
+        
+        Input example:
+        {
+          \"stations\": [
+            {\"id\": \"S109\", \"name\": \"Ang Mo Kio\", \"location\": {\"latitude\": 1.3764, \"longitude\": 103.8492}}
+          ],
+          \"readings\": [
+            {\"timestamp\": \"2026-02-20T14:16:00+08:00\", \"data\": [{\"stationId\": \"S109\", \"value\": 28.3}]}
+          ],
+          \"readingType\": \"DBT 1M F\",
+          \"readingUnit\": \"deg C\"
+        }
+        
+        Output (Temporal GeoJSON):
+        {
+          \"type\": \"FeatureCollection\",
+          \"features\": [
+            {
+              \"type\": \"Feature\",
+              \"geometry\": {\"type\": \"Point\", \"coordinates\": [103.8492, 1.3764]},
+              \"properties\": {
+                \"static\": {\"id\": \"S109\", \"name\": \"Ang Mo Kio\"},
+                \"temporal\": {
+                  \"dbt_1m_f\": {
+                    \"unit\": \"deg C\",
+                    \"series\": [{\"time\": \"2026-02-20T14:16:00+08:00\", \"value\": 28.3}]
+                  }
+                }
+              }
+            }
+          ]
+        }
+        \"\"\"
+        stations = data.get('stations', [])
+        readings = data.get('readings', [])
+        reading_type = data.get('readingType', 'value')
+        reading_unit = data.get('readingUnit', '')
+        
+        # Map stations by ID
+        station_map = {s.get('id', s.get('deviceId', '')): s for s in stations}
+        
+        # Group readings by stationId
+        station_readings = {}
+        for reading_entry in readings:
+            timestamp = reading_entry.get('timestamp', '')
+            data_points = reading_entry.get('data', [])
+            
+            for point in data_points:
+                station_id = point.get('stationId', '')
+                value = point.get('value')
+                
+                if station_id not in station_readings:
+                    station_readings[station_id] = []
+                
+                station_readings[station_id].append({'time': timestamp, 'value': value})
+        
+        # Build GeoJSON features
+        features = []
+        for station_id, station_info in station_map.items():
+            location = station_info.get('location', {})
+            lat = location.get('latitude')
+            lon = location.get('longitude')
+            
+            if lat is None or lon is None:
+                continue
+            
+            # Static properties
+            static_props = {k: v for k, v in station_info.items() 
+                          if k not in ['location'] and not isinstance(v, dict)}
+            
+            # Temporal properties
+            temporal_props = {}
+            if station_id in station_readings:
+                series = sorted(station_readings[station_id], 
+                              key=lambda x: x['time'], reverse=True)
+                
+                attr_name = reading_type.lower().replace(' ', '_') or 'value'
+                temporal_props[attr_name] = {'unit': reading_unit, 'series': series}
+            
+            feature = {
+                'type': 'Feature',
+                'geometry': {'type': 'Point', 'coordinates': [lon, lat]},
+                'properties': {'static': static_props}
+            }
+            
+            if temporal_props:
+                feature['properties']['temporal'] = temporal_props
+            
+            features.append(feature)
+        
+        return {'type': 'FeatureCollection', 'features': features}
+        return data.get('type') in ['FeatureCollection', 'Feature']
+    
     def process_geojson(
         self, 
         geojson_data: Dict, 
@@ -508,6 +639,7 @@ class DataProcessor:
     ) -> Dict[str, Any]:
         """
         Process GeoJSON data for map visualization.
+        Supports both temporal (time-series) and static properties.
         
         Returns:
             {
@@ -515,6 +647,8 @@ class DataProcessor:
                 'geojson': <processed GeoJSON>,
                 'features_count': int,
                 'bounds': [[lat, lon], [lat, lon]],
+                'property_type': 'temporal' or 'static',
+                'temporal_attributes': {...},  # Only for temporal
                 'metadata': {...}
             }
         """
@@ -528,16 +662,61 @@ class DataProcessor:
         
         bounds = self._calculate_bounds(coords) if coords else None
         
-        return {
+        # Detect property type (temporal vs. static)
+        property_type = 'static'
+        temporal_attributes = None
+        
+        if features:
+            first_feature = features[0]
+            properties = first_feature.get('properties', {})
+            
+            # Check if properties contain 'temporal' key
+            if 'temporal' in properties:
+                property_type = 'temporal'
+                temporal_attributes = self._extract_temporal_metadata(properties['temporal'])
+        
+        result = {
             'data_type': 'geojson',
             'geojson': geojson_data,
             'features_count': len(features),
             'bounds': bounds,
+            'property_type': property_type,
             'metadata': {
                 'timestamp': full_response.get('invokedAt'),
                 'endpoint_id': full_response.get('endpointId')
             }
         }
+        
+        if temporal_attributes:
+            result['temporal_attributes'] = temporal_attributes
+        
+        return result
+    
+    def _extract_temporal_metadata(self, temporal_data: Dict) -> Dict:
+        """
+        Extract metadata from temporal properties.
+        
+        Args:
+            temporal_data: The 'temporal' object from GeoJSON properties
+            
+        Returns:
+            Dictionary with attribute names, units, and time ranges
+        """
+        metadata = {}
+        
+        for attr_name, attr_data in temporal_data.items():
+            series = attr_data.get('series', [])
+            
+            if series:
+                time_values = [entry['time'] for entry in series if 'time' in entry]
+                
+                metadata[attr_name] = {
+                    'unit': attr_data.get('unit', ''),
+                    'time_range': [min(time_values), max(time_values)] if time_values else None,
+                    'data_points': len(series)
+                }
+        
+        return metadata
     
     def process_time_series(
         self, 
@@ -970,6 +1149,145 @@ civic-app/
 
 ## Data Processing Strategies by Data Type
 
+### 0. Geographic Location Data (Auto-Converted to GeoJSON)
+
+**Input Structure (Non-Standard Format):**
+```json
+{
+  "stations": [
+    {
+      "id": "S109",
+      "deviceId": "S109",
+      "name": "Ang Mo Kio Avenue 5",
+      "location": {
+        "latitude": 1.3764,
+        "longitude": 103.8492
+      }
+    },
+    {
+      "id": "S106",
+      "name": "Pulau Ubin",
+      "location": {
+        "latitude": 1.4168,
+        "longitude": 103.9673
+      }
+    }
+  ],
+  "readings": [
+    {
+      "timestamp": "2026-02-20T14:16:00+08:00",
+      "data": [
+        {"stationId": "S109", "value": 28.3},
+        {"stationId": "S106", "value": 28.6}
+      ]
+    },
+    {
+      "timestamp": "2026-02-20T14:15:00+08:00",
+      "data": [
+        {"stationId": "S109", "value": 28.3},
+        {"stationId": "S106", "value": 28.7}
+      ]
+    }
+  ],
+  "readingType": "DBT 1M F",
+  "readingUnit": "deg C"
+}
+```
+
+**Backend Processing:**
+- **Automatic Detection**: Identifies `stations` array with `location` data
+- **Transformation**: Converts to temporal GeoJSON format
+- **Station Mapping**: Groups readings by station ID
+- **Time-Series Organization**: Sorts readings chronologically
+- **Metadata Preservation**: Keeps reading type and unit information
+
+**Converted to Temporal GeoJSON:**
+```json
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [103.8492, 1.3764]
+      },
+      "properties": {
+        "static": {
+          "id": "S109",
+          "deviceId": "S109",
+          "name": "Ang Mo Kio Avenue 5"
+        },
+        "temporal": {
+          "dbt_1m_f": {
+            "unit": "deg C",
+            "series": [
+              {"time": "2026-02-20T14:16:00+08:00", "value": 28.3},
+              {"time": "2026-02-20T14:15:00+08:00", "value": 28.3}
+            ]
+          }
+        }
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [103.9673, 1.4168]
+      },
+      "properties": {
+        "static": {
+          "id": "S106",
+          "name": "Pulau Ubin"
+        },
+        "temporal": {
+          "dbt_1m_f": {
+            "unit": "deg C",
+            "series": [
+              {"time": "2026-02-20T14:16:00+08:00", "value": 28.6},
+              {"time": "2026-02-20T14:15:00+08:00", "value": 28.7}
+            ]
+          }
+        }
+      }
+    }
+  ]
+}
+```
+
+**API Response Structure:**
+```json
+{
+  "status": "success",
+  "data": {
+    "geojson": {"type": "FeatureCollection", "features": [...]},
+    "bounds": [[1.3764, 103.8492], [1.4168, 103.9673]],
+    "center": {"lat": 1.3966, "lon": 103.90825},
+    "features_count": 2,
+    "property_type": "temporal",
+    "temporal_attributes": {
+      "dbt_1m_f": {
+        "unit": "deg C",
+        "time_range": ["2026-02-20T14:15:00+08:00", "2026-02-20T14:16:00+08:00"],
+        "data_points": 2
+      }
+    }
+  },
+  "visualization_type": "map_temporal",
+  "metadata": {}
+}
+```
+
+**Frontend Visualization Suggestions:**
+- Animated map showing temperature changes over time
+- Time slider to scrub through readings
+- Station markers color-coded by current temperature value
+- Click station to see time-series chart for that location
+- Heatmap interpolation between stations
+- Play/pause controls for automatic time progression
+
+---
+
 ### 1. Temperature Data (Time-Series)
 
 **Input Structure:**
@@ -1014,35 +1332,80 @@ civic-app/
 - Heatmap: Temperature distribution by hour/day
 - Summary cards: Current, min, max, avg
 
-### 2. Bus Location Data (GeoJSON)
+### 2. Geospatial Data (GeoJSON)
 
-**Input Structure:**
+**GeoJSON supports two property structures:**
+
+**A. Temporal Properties (with time-series data):**
 ```json
 {
-  "type": "FeatureCollection",
-  "features": [
-    {
-      "type": "Feature",
-      "geometry": {
-        "type": "Point",
-        "coordinates": [103.8198, 1.3521]
+  "type": "Feature",
+  "geometry": {
+    "type": "Point",
+    "coordinates": [103.851959, 1.290270]
+  },
+  "properties": {
+    "static": {
+      "name": "Singapore",
+      "station_id": "S50"
+    },
+    "temporal": {
+      "temperature": {
+        "unit": "C",
+        "series": [
+          { "time": "2026-02-20T00:00:00Z", "value": 27.1 },
+          { "time": "2026-02-20T03:00:00Z", "value": 26.8 },
+          { "time": "2026-02-20T06:00:00Z", "value": 28.5 }
+        ]
       },
-      "properties": {
-        "bus_number": "123",
-        "timestamp": "2026-02-01T10:00:00"
+      "humidity": {
+        "unit": "%",
+        "series": [
+          { "time": "2026-02-20T00:00:00Z", "value": 85 },
+          { "time": "2026-02-20T03:00:00Z", "value": 82 }
+        ]
       }
     }
-  ]
+  }
+}
+```
+
+**B. Static Properties (time-independent data):**
+```json
+{
+  "type": "Feature",
+  "geometry": {
+    "type": "Point",
+    "coordinates": [103.851959, 1.290270]
+  },
+  "properties": {
+    "name": "Singapore",
+    "country": "Singapore",
+    "population": 5927000,
+    "area_km2": 728.6,
+    "elevation_m": 15,
+    "climate_type": "Tropical rainforest",
+    "is_capital": true
+  }
 }
 ```
 
 **Backend Processing:**
 - Validate GeoJSON structure
+- Detect property type (temporal vs. static)
 - Extract coordinates for bounds calculation
+- For temporal properties:
+  - Extract time-series data from nested `temporal` object
+  - Preserve units and metadata
+  - Support multiple temporal attributes (temperature, humidity, etc.)
+- For static properties:
+  - Pass through as-is
 - Calculate map center point
-- Return GeoJSON with metadata
+- Return GeoJSON with metadata and property type indicator
 
 **API Response Structure:**
+
+**For Temporal GeoJSON:**
 ```json
 {
   "status": "success",
@@ -1050,7 +1413,28 @@ civic-app/
     "geojson": {"type": "FeatureCollection", "features": [...]},
     "bounds": [[1.2, 103.7], [1.4, 103.9]],
     "center": {"lat": 1.3521, "lon": 103.8198},
-    "features_count": 50
+    "features_count": 50,
+    "property_type": "temporal",
+    "temporal_attributes": {
+      "temperature": {"unit": "C", "time_range": ["2026-02-20T00:00:00Z", "2026-02-20T06:00:00Z"]},
+      "humidity": {"unit": "%", "time_range": ["2026-02-20T00:00:00Z", "2026-02-20T03:00:00Z"]}
+    }
+  },
+  "visualization_type": "map_temporal",
+  "metadata": {}
+}
+```
+
+**For Static GeoJSON:**
+```json
+{
+  "status": "success",
+  "data": {
+    "geojson": {"type": "FeatureCollection", "features": [...]},
+    "bounds": [[1.2, 103.7], [1.4, 103.9]],
+    "center": {"lat": 1.3521, "lon": 103.8198},
+    "features_count": 50,
+    "property_type": "static"
   },
   "visualization_type": "map",
   "metadata": {}
@@ -1058,10 +1442,21 @@ civic-app/
 ```
 
 **Frontend Visualization Suggestions:**
+
+**For Temporal GeoJSON:**
+- Animated map with time slider/scrubber
+- Color-coded heatmap based on temporal values
+- Time-series chart on marker click
+- Play/pause animation controls
+- Multi-attribute toggle (temperature, humidity, etc.)
+- Temporal legend showing current time value ranges
+
+**For Static GeoJSON:**
 - Interactive map with markers (Leaflet, Mapbox, Google Maps)
 - Cluster markers for dense areas
-- Color-code by bus route
-- Show bus details on click/hover
+- Color-code by categorical properties
+- Show property details on click/hover
+- Filter by static attributes (e.g., population > 1M)
 
 ### 3. Generic Tabular Data
 
