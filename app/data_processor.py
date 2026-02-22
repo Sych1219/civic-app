@@ -177,21 +177,19 @@ class DataProcessor:
           "items": [{"name": "POI", "latitude": 1.3764, "longitude": 103.8492, "properties": {...}}]
         }
         
-        Into temporal GeoJSON:
+        Returns GeoJSON with MultiPoint geometry containing all coordinates:
         {
           "type": "FeatureCollection",
           "features": [
             {
               "type": "Feature",
-              "geometry": {"type": "Point", "coordinates": [103.8492, 1.3764]},
+              "geometry": {
+                "type": "MultiPoint",
+                "coordinates": [[103.8492, 1.3764], [103.9673, 1.4168], ...]
+              },
               "properties": {
-                "static": {"id": "S109", "name": "..."},
-                "temporal": {
-                  "temperature": {
-                    "unit": "deg C",
-                    "series": [{"time": "...", "value": 28.3}, ...]
-                  }
-                }
+                "static": {...},
+                "temporal": {...}
               }
             }
           ]
@@ -201,7 +199,7 @@ class DataProcessor:
             data: Station-based time-series data
             
         Returns:
-            GeoJSON FeatureCollection with temporal properties
+            GeoJSON FeatureCollection with MultiPoint geometry
         """
         # Detect which pattern we're dealing with
         geo_items = []
@@ -244,6 +242,11 @@ class DataProcessor:
         if not geo_items and isinstance(data, list) and len(data) > 0:
             if self._has_location_fields(data[0]):
                 geo_items = data
+        
+        # Collect all coordinates and aggregate properties
+        all_coordinates = []
+        aggregated_static = {}
+        aggregated_temporal = {}
         
         # Create a mapping of item ID -> item metadata
         item_map = {}
@@ -292,8 +295,7 @@ class DataProcessor:
                             'value': value
                         })
         
-        # Build GeoJSON features
-        features = []
+        # Process all items to collect coordinates and aggregate data
         for item_id, item_info in item_map.items():
             # Extract coordinates from various formats
             lat, lon = self._extract_coordinates(item_info)
@@ -301,18 +303,19 @@ class DataProcessor:
             if lat is None or lon is None:
                 continue
             
-            # Extract static properties (exclude location-related fields)
+            # Add coordinates to the list
+            all_coordinates.append([lon, lat])  # GeoJSON uses [lon, lat]
+            
+            # Aggregate static properties
             excluded_keys = ['location', 'latitude', 'longitude', 'lat', 'lon', 'lng', 
                            'coordinates', 'geometry', 'readings', 'data']
-            static_props = {
-                k: v for k, v in item_info.items() 
-                if k not in excluded_keys and not isinstance(v, (dict, list))
-            }
+            for k, v in item_info.items():
+                if k not in excluded_keys and not isinstance(v, (dict, list)):
+                    if k not in aggregated_static:
+                        aggregated_static[k] = []
+                    aggregated_static[k].append(v)
             
-            # Build temporal properties
-            temporal_props = {}
-            
-            # Check for explicit readings (time-series data)
+            # Aggregate temporal data
             if item_id in item_readings:
                 # Sort readings by time (descending - most recent first)
                 series = sorted(
@@ -326,42 +329,44 @@ class DataProcessor:
                 if not attr_name:
                     attr_name = 'value'
                 
-                temporal_props[attr_name] = {
-                    'unit': reading_unit,
-                    'series': series
-                }
+                if attr_name not in aggregated_temporal:
+                    aggregated_temporal[attr_name] = {
+                        'unit': reading_unit,
+                        'series': []
+                    }
+                aggregated_temporal[attr_name]['series'].extend(series)
             
-            # Check for embedded time-series data in the item itself
+            # Check for embedded time-series data
             elif 'timeSeries' in item_info or 'series' in item_info:
                 series_data = item_info.get('timeSeries', item_info.get('series', []))
                 if series_data and isinstance(series_data, list):
                     attr_name = item_info.get('measurementType', 'value').lower().replace(' ', '_')
-                    temporal_props[attr_name] = {
-                        'unit': item_info.get('unit', ''),
-                        'series': series_data
-                    }
-            
-            # Create GeoJSON Feature
-            feature = {
-                'type': 'Feature',
-                'geometry': {
-                    'type': 'Point',
-                    'coordinates': [lon, lat]  # GeoJSON uses [lon, lat]
-                },
-                'properties': {
-                    'static': static_props
-                }
+                    if attr_name not in aggregated_temporal:
+                        aggregated_temporal[attr_name] = {
+                            'unit': item_info.get('unit', ''),
+                            'series': []
+                        }
+                    aggregated_temporal[attr_name]['series'].extend(series_data)
+        
+        # Create single feature with MultiPoint geometry
+        feature = {
+            'type': 'Feature',
+            'geometry': {
+                'type': 'MultiPoint',
+                'coordinates': all_coordinates
+            },
+            'properties': {
+                'static': aggregated_static
             }
-            
-            # Only add temporal if we have time-series data
-            if temporal_props:
-                feature['properties']['temporal'] = temporal_props
-            
-            features.append(feature)
+        }
+        
+        # Only add temporal if we have time-series data
+        if aggregated_temporal:
+            feature['properties']['temporal'] = aggregated_temporal
         
         return {
             'type': 'FeatureCollection',
-            'features': features
+            'features': [feature]
         }
     
     def _extract_coordinates(self, item: Dict) -> tuple:
