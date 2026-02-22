@@ -139,12 +139,40 @@ class ResponseFormatter:
         
         # Handle both dict and Pydantic model
         if isinstance(data, GeoJSONProcessedResponse):
-            geojson_data = data.geojson
-            bounds = data.bounds
-            property_type = data.property_type
-            features_count = data.features_count
-            temporal_attributes = data.temporal_attributes
-            metadata = data.metadata.model_dump() if hasattr(data.metadata, 'model_dump') else data.metadata
+            # geojson is a FeatureCollection Pydantic model
+            geojson_model = data.geojson
+            # Extract metadata from GeoJSON
+            features = geojson_model.features if hasattr(geojson_model, 'features') else []
+            features_count = len(features)
+            
+            # Calculate bounds from features
+            bounds = None
+            if features:
+                lats = []
+                lons = []
+                for feature in features:
+                    # Feature is also a Pydantic model
+                    geom = feature.geometry if hasattr(feature, 'geometry') else None
+                    if geom and geom.type == 'Point':
+                        coords = geom.coordinates
+                        if coords and len(coords) >= 2:
+                            lons.append(coords[0])
+                            lats.append(coords[1])
+                if lats and lons:
+                    bounds = [[min(lats), min(lons)], [max(lats), max(lons)]]
+            
+            # Check for temporal properties
+            property_type = 'static'
+            temporal_attributes = None
+            if features:
+                props = features[0].properties
+                if props is not None and props.temporal:
+                    property_type = 'temporal'
+                    temporal_attributes = props.temporal
+            
+            metadata = {}
+            # Convert FeatureCollection model to dict for response
+            geojson_data = geojson_model.model_dump() if hasattr(geojson_model, 'model_dump') else geojson_model
         else:
             # Legacy dict format
             geojson_data = data['geojson']

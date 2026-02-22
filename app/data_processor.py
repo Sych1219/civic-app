@@ -1,36 +1,56 @@
 """Data processor for transforming API responses into visualization-ready formats."""
 
 import pandas as pd
-from typing import Dict, Any, List, Optional, Literal
-import json
+from typing import Dict, Any, List, Optional, Literal, Union
 from pydantic import BaseModel, Field
+# =========================
+# Geometry Models
+# =========================
+
+class PointGeometry(BaseModel):
+    type: Literal["Point"]
+    coordinates: List[float]  # [longitude, latitude]
 
 
-class TemporalAttribute(BaseModel):
-    """Metadata for a temporal attribute in GeoJSON properties."""
-    unit: str = Field(default="", description="Unit of measurement")
-    time_range: Optional[List[str]] = Field(default=None, description="[min_time, max_time]")
-    data_points: int = Field(description="Number of data points in the series")
+class MultiPointGeometry(BaseModel):
+    type: Literal["MultiPoint"]
+    coordinates: List[List[float]]  # [[lon, lat], [lon, lat]]
 
 
-class GeoJSONMetadata(BaseModel):
-    """Metadata for the GeoJSON response."""
-    timestamp: Optional[str] = Field(default=None, description="When the API was invoked")
-    endpoint_id: Optional[str] = Field(default=None, description="ID of the endpoint")
+Geometry = Union[PointGeometry, MultiPointGeometry]
 
 
+# =========================
+# Feature Model
+# =========================
+class TemporalProperty(BaseModel):
+    """Model for temporal properties in GeoJSON features."""
+    series: List[Dict[str, Any]] = Field(description="List of time-series data points")
+    unit: Optional[str] = Field(default=None, description="Unit of measurement for the temporal data")
+
+class Properties(BaseModel):
+    static: Optional[Dict[str, Any]] = Field(default=None, description="Static properties of the feature")
+    temporal: Optional[TemporalProperty] = Field(default=None, description="Temporal properties (time-series) of the feature")
+
+class Feature(BaseModel):
+    type: Literal["Feature"] = "Feature"
+    geometry: Geometry
+    properties: Optional[Properties] = None
+
+# =========================
+# FeatureCollection Model
+# =========================
+
+class FeatureCollection(BaseModel):
+    type: Literal["FeatureCollection"] = "FeatureCollection"
+    features: List[Feature]
+
+
+# ========================
 class GeoJSONProcessedResponse(BaseModel):
     """Processed GeoJSON response with visualization metadata."""
     data_type: Literal['geojson'] = Field(default='geojson', description="Data type identifier")
-    geojson: Dict[str, Any] = Field(description="GeoJSON FeatureCollection")
-    features_count: int = Field(description="Number of features in the collection")
-    bounds: Optional[List[List[float]]] = Field(default=None, description="[[min_lat, min_lon], [max_lat, max_lon]]")
-    property_type: Literal['temporal', 'static'] = Field(description="Type of properties in features")
-    temporal_attributes: Optional[Dict[str, TemporalAttribute]] = Field(
-        default=None, 
-        description="Metadata for temporal attributes (only present for temporal property_type)"
-    )
-    metadata: GeoJSONMetadata = Field(description="Response metadata")
+    geojson: FeatureCollection = Field(description="GeoJSON FeatureCollection")
 
 
 class DataProcessor:
@@ -153,7 +173,7 @@ class DataProcessor:
         
         return False
     
-    def _convert_to_geojson(self, data: Dict) -> Dict:
+    def _convert_to_geojson(self, data: Dict) -> FeatureCollection:
         """
         Convert any data with geographic location information to GeoJSON format.
         
@@ -348,26 +368,47 @@ class DataProcessor:
                         }
                     aggregated_temporal[attr_name]['series'].extend(series_data)
         
-        # Create single feature with MultiPoint geometry
-        feature = {
-            'type': 'Feature',
-            'geometry': {
-                'type': 'MultiPoint',
-                'coordinates': all_coordinates
-            },
-            'properties': {
-                'static': aggregated_static
-            }
-        }
+        # Create MultiPoint geometry
+        geometry = MultiPointGeometry(
+            type="MultiPoint",
+            coordinates=all_coordinates
+        )
         
-        # Only add temporal if we have time-series data
+        # Create properties with temporal data if it exists
         if aggregated_temporal:
-            feature['properties']['temporal'] = aggregated_temporal
+            # Merge all temporal series into a single TemporalProperty
+            merged_series = []
+            merged_unit = None
+            for attr_name, attr_data in aggregated_temporal.items():
+                for entry in attr_data['series']:
+                    merged_series.append({**entry, 'attribute': attr_name})
+                if merged_unit is None:
+                    merged_unit = attr_data.get('unit')
+            
+            properties = Properties(
+                static=aggregated_static,
+                temporal=TemporalProperty(
+                    series=merged_series,
+                    unit=merged_unit
+                )
+            )
+        else:
+            properties = Properties(
+                static=aggregated_static
+            )
         
-        return {
-            'type': 'FeatureCollection',
-            'features': [feature]
-        }
+        # Create Feature with Pydantic models
+        feature = Feature(
+            type="Feature",
+            geometry=geometry,
+            properties=properties
+        )
+        
+        # Return FeatureCollection
+        return FeatureCollection(
+            type="FeatureCollection",
+            features=[feature]
+        )
     
     def _extract_coordinates(self, item: Dict) -> tuple:
         """
@@ -404,7 +445,7 @@ class DataProcessor:
     
     def process_geojson(
         self, 
-        geojson_data: Dict, 
+        geojson_data: Union[Dict, FeatureCollection], 
         full_response: Dict
     ) -> GeoJSONProcessedResponse:
         """
@@ -412,81 +453,19 @@ class DataProcessor:
         Supports both temporal (time-series) and static properties.
         
         Args:
-            geojson_data: GeoJSON formatted data
+            geojson_data: GeoJSON formatted data (can be dict or FeatureCollection)
             full_response: Full API response with metadata
             
         Returns:
-            GeoJSONProcessedResponse with structure: {
-                'data_type': 'geojson',
-                'geojson': <processed GeoJSON>,
-                'features_count': int,
-                'bounds': [[lat, lon], [lat, lon]],
-                'property_type': 'temporal' or 'static',
-                'temporal_attributes': {...},  # Only for temporal
-                'metadata': {...}
-            }
+            GeoJSONProcessedResponse with data_type and geojson fields
         """
-        features = geojson_data.get('features', [])
-        
-        # Extract coordinates for bounds calculation
-        coords = []
-        for feature in features:
-            if feature.get('geometry', {}).get('type') == 'Point':
-                coords.append(feature['geometry']['coordinates'])
-        
-        bounds = self._calculate_bounds(coords) if coords else None
-        
-        # Detect property type (temporal vs. static)
-        property_type = 'static'
-        temporal_attributes = None
-        
-        if features:
-            first_feature = features[0]
-            properties = first_feature.get('properties', {})
-            
-            # Check if properties contain 'temporal' key
-            if 'temporal' in properties:
-                property_type = 'temporal'
-                temporal_attributes = self._extract_temporal_metadata(properties['temporal'])
+        # Convert to FeatureCollection if it's a dict
+        if isinstance(geojson_data, dict):
+            geojson_data = FeatureCollection(**geojson_data)
         
         return GeoJSONProcessedResponse(
-            data_type='geojson',
-            geojson=geojson_data,
-            features_count=len(features),
-            bounds=bounds,
-            property_type=property_type,
-            temporal_attributes=temporal_attributes,
-            metadata=GeoJSONMetadata(
-                timestamp=full_response.get('invokedAt'),
-                endpoint_id=full_response.get('endpointId')
-            )
+            geojson=geojson_data
         )
-    
-    def _extract_temporal_metadata(self, temporal_data: Dict) -> Dict[str, TemporalAttribute]:
-        """
-        Extract metadata from temporal properties.
-        
-        Args:
-            temporal_data: The 'temporal' object from GeoJSON properties
-            
-        Returns:
-            Dictionary mapping attribute names to TemporalAttribute models
-        """
-        metadata = {}
-        
-        for attr_name, attr_data in temporal_data.items():
-            series = attr_data.get('series', [])
-            
-            if series:
-                time_values = [entry['time'] for entry in series if 'time' in entry]
-                
-                metadata[attr_name] = TemporalAttribute(
-                    unit=attr_data.get('unit', ''),
-                    time_range=[min(time_values), max(time_values)] if time_values else None,
-                    data_points=len(series)
-                )
-        
-        return metadata
     
     def process_time_series(
         self, 

@@ -174,13 +174,6 @@ async def process_query(request: QueryRequest):
         logger.info("Step 4: Processing response data...")
         processed = components['processor'].process_response(response)
         
-        # Handle both Pydantic model and dict responses
-        if hasattr(processed, 'data_type'):
-            data_type = processed.data_type
-        else:
-            data_type = processed.get('data_type', 'unknown')
-        logger.info(f"Data processed as type: {data_type}")
-        
         # Step 5: Format response for frontend
         logger.info("Step 5: Formatting response...")
         result = components['formatter'].format_response(processed, request.query)
