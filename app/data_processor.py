@@ -101,15 +101,11 @@ class DataProcessor:
         Returns:
             True if data contains geographic location information
         """
-        # Check at current level
-        location_keys = ['stations', 'locations', 'items', 'data', 'results', 'features']
-        
-        for key in location_keys:
-            if key in data:
-                items = data[key]
-                if isinstance(items, list) and len(items) > 0:
-                    if self._has_location_fields(items[0]):
-                        return True
+        # Check all keys at current level for any list containing location fields
+        for key, value in data.items():
+            if isinstance(value, list) and len(value) > 0:
+                if self._has_location_fields(value[0]):
+                    return True
         
         # Check if data itself is an array with locations
         if isinstance(data, list) and len(data) > 0:
@@ -119,13 +115,11 @@ class DataProcessor:
         # Recursively check nested objects (one level deep to avoid performance issues)
         for key, value in data.items():
             if isinstance(value, dict):
-                # Check if this nested object has location arrays
-                for nested_key in location_keys:
-                    if nested_key in value:
-                        nested_items = value[nested_key]
-                        if isinstance(nested_items, list) and len(nested_items) > 0:
-                            if self._has_location_fields(nested_items[0]):
-                                return True
+                # Check all keys in nested object for lists with location fields
+                for nested_key, nested_value in value.items():
+                    if isinstance(nested_value, list) and len(nested_value) > 0:
+                        if self._has_location_fields(nested_value[0]):
+                            return True
         
         return False
     
@@ -227,34 +221,29 @@ class DataProcessor:
         reading_type = data.get('readingType', 'value')
         reading_unit = data.get('readingUnit', '')
         
-        # Try different keys for geo-location data at top level
-        location_keys = ['stations', 'locations', 'items', 'data', 'results', 'features']
-        for key in location_keys:
-            if key in data:
-                items = data[key]
-                if isinstance(items, list) and len(items) > 0:
-                    if self._has_location_fields(items[0]):
-                        geo_items = items
-                        break
+        # Auto-detect any key at top level whose value is a list with location fields
+        for key, value in data.items():
+            if isinstance(value, list) and len(value) > 0:
+                if self._has_location_fields(value[0]):
+                    geo_items = value
+                    break
         
         # If not found at top level, check nested objects (one level deep)
         if not geo_items:
             for key, value in data.items():
                 if isinstance(value, dict):
-                    for nested_key in location_keys:
-                        if nested_key in value:
-                            items = value[nested_key]
-                            if isinstance(items, list) and len(items) > 0:
-                                if self._has_location_fields(items[0]):
-                                    geo_items = items
-                                    # Also check for nested readings
-                                    if 'readings' in value:
-                                        readings = value.get('readings', readings)
-                                    if 'readingType' in value:
-                                        reading_type = value.get('readingType', reading_type)
-                                    if 'readingUnit' in value:
-                                        reading_unit = value.get('readingUnit', reading_unit)
-                                    break
+                    for nested_key, nested_value in value.items():
+                        if isinstance(nested_value, list) and len(nested_value) > 0:
+                            if self._has_location_fields(nested_value[0]):
+                                geo_items = nested_value
+                                # Also check for nested readings
+                                if 'readings' in value:
+                                    readings = value.get('readings', readings)
+                                if 'readingType' in value:
+                                    reading_type = value.get('readingType', reading_type)
+                                if 'readingUnit' in value:
+                                    reading_unit = value.get('readingUnit', reading_unit)
+                                break
                     if geo_items:
                         break
         

@@ -43,12 +43,6 @@ This document describes the end-to-end architecture for the Civic App backend, w
 │                   DATA PROCESSING LAYER                         │
 │           (Pandas + Data Transformation)                        │
 └─────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                    VISUALIZATION LAYER                          │
-│      (Plotly/Altair for Charts, Folium/Deck.gl for Maps)      │
-└─────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -521,11 +515,12 @@ class DataProcessor:
         """
         Check if data contains geographic location information.
         
-        Detects various patterns like stations, locations, items with lat/lon.
+        Auto-detects any array in the JSON whose items contain lat/lon fields,
+        regardless of the key name (e.g. 'stations', 'busstops', 'sensors', etc.).
         \"\"\"
-        for key in ['stations', 'locations', 'items', 'data', 'results']:
-            if key in data and isinstance(data[key], list) and len(data[key]) > 0:
-                item = data[key][0]
+        for key, value in data.items():
+            if isinstance(value, list) and len(value) > 0:
+                item = value[0]
                 # Check nested location
                 if 'location' in item and isinstance(item['location'], dict):
                     loc = item['location']
@@ -1076,9 +1071,6 @@ httpx>=0.27.2              # Async HTTP client
 pandas>=2.0.0              # Data manipulation
 numpy>=1.24.0              # Numerical operations
 
-# Data Serialization (for frontend visualization hints)
-# Note: Actual visualization happens in frontend
-
 # Utilities
 python-dotenv>=1.0.1       # Environment variables
 jmespath>=1.0.1            # JSON querying
@@ -1195,11 +1187,11 @@ civic-app/
 ```
 
 **Backend Processing:**
-- **Automatic Detection**: Identifies `stations` array with `location` data
-- **Transformation**: Converts to temporal GeoJSON format
-- **Station Mapping**: Groups readings by station ID
-- **Time-Series Organization**: Sorts readings chronologically
-- **Metadata Preservation**: Keeps reading type and unit information
+- **Automatic Detection**: Iterates all keys in the JSON and identifies any array whose items contain `location` data (key name is not hardcoded)
+- **Transformation**: Converts to a single GeoJSON Feature with `MultiPoint` geometry (all items aggregated)
+- **Item Mapping**: Groups readings by item ID; `static` properties become lists of values across all items
+- **Time-Series Organization**: Sorts readings by time (descending), merged into one flat `temporal` series with an `attribute` field per entry
+- **Metadata Preservation**: Keeps reading type (as `attribute`) and unit information
 
 **Converted to Temporal GeoJSON:**
 ```json
@@ -1209,45 +1201,24 @@ civic-app/
     {
       "type": "Feature",
       "geometry": {
-        "type": "Point",
-        "coordinates": [103.8492, 1.3764]
+        "type": "MultiPoint",
+        "coordinates": [
+          [103.8492, 1.3764],
+          [103.9673, 1.4168]
+        ]
       },
       "properties": {
         "static": {
-          "id": "S109",
-          "deviceId": "S109",
-          "name": "Ang Mo Kio Avenue 5"
+          "id": ["S109", "S106"],
+          "deviceId": ["S109", "S106"],
+          "name": ["Ang Mo Kio Avenue 5", "Pulau Ubin"]
         },
         "temporal": {
-          "dbt_1m_f": {
-            "unit": "deg C",
-            "series": [
-              {"time": "2026-02-20T14:16:00+08:00", "value": 28.3},
-              {"time": "2026-02-20T14:15:00+08:00", "value": 28.3}
-            ]
-          }
-        }
-      }
-    },
-    {
-      "type": "Feature",
-      "geometry": {
-        "type": "Point",
-        "coordinates": [103.9673, 1.4168]
-      },
-      "properties": {
-        "static": {
-          "id": "S106",
-          "name": "Pulau Ubin"
-        },
-        "temporal": {
-          "dbt_1m_f": {
-            "unit": "deg C",
-            "series": [
-              {"time": "2026-02-20T14:16:00+08:00", "value": 28.6},
-              {"time": "2026-02-20T14:15:00+08:00", "value": 28.7}
-            ]
-          }
+          "series": [
+            {"time": "2026-02-20T14:16:00+08:00", "value": 28.3, "attribute": "dbt_1m_f"},
+            {"time": "2026-02-20T14:15:00+08:00", "value": 28.3, "attribute": "dbt_1m_f"}
+          ],
+          "unit": "deg C"
         }
       }
     }
@@ -1261,16 +1232,18 @@ civic-app/
   "status": "success",
   "data": {
     "geojson": {"type": "FeatureCollection", "features": [...]},
-    "bounds": [[1.3764, 103.8492], [1.4168, 103.9673]],
-    "center": {"lat": 1.3966, "lon": 103.90825},
-    "features_count": 2,
+    "bounds": null,
+    "center": {"lat": 1.3521, "lon": 103.8198},
+    "features_count": 1,
     "property_type": "temporal",
     "temporal_attributes": {
-      "dbt_1m_f": {
-        "unit": "deg C",
-        "time_range": ["2026-02-20T14:15:00+08:00", "2026-02-20T14:16:00+08:00"],
-        "data_points": 2
-      }
+      "series": [
+        {"time": "2026-02-20T14:16:00+08:00", "value": 28.3, "attribute": "dbt_1m_f"},
+        {"time": "2026-02-20T14:15:00+08:00", "value": 28.3, "attribute": "dbt_1m_f"},
+        {"time": "2026-02-20T14:16:00+08:00", "value": 28.6, "attribute": "dbt_1m_f"},
+        {"time": "2026-02-20T14:15:00+08:00", "value": 28.7, "attribute": "dbt_1m_f"}
+      ],
+      "unit": "deg C"
     }
   },
   "visualization_type": "map_temporal",
@@ -1278,13 +1251,7 @@ civic-app/
 }
 ```
 
-**Frontend Visualization Suggestions:**
-- Animated map showing temperature changes over time
-- Time slider to scrub through readings
-- Station markers color-coded by current temperature value
-- Click station to see time-series chart for that location
-- Heatmap interpolation between stations
-- Play/pause controls for automatic time progression
+> **Note:** `bounds` is `null` and `center` defaults to Singapore because the `MultiPoint` geometry type is not handled in the bounds calculation. `features_count` is `1` since all stations are merged into a single Feature.
 
 ---
 
@@ -1326,12 +1293,6 @@ civic-app/
 }
 ```
 
-**Frontend Visualization Suggestions:**
-- Line chart: Temperature over time
-- Bar chart: Average by station
-- Heatmap: Temperature distribution by hour/day
-- Summary cards: Current, min, max, avg
-
 ### 2. Geospatial Data (GeoJSON)
 
 **GeoJSON supports two property structures:**
@@ -1350,25 +1311,20 @@ civic-app/
       "station_id": "S50"
     },
     "temporal": {
-      "temperature": {
-        "unit": "C",
-        "series": [
-          { "time": "2026-02-20T00:00:00Z", "value": 27.1 },
-          { "time": "2026-02-20T03:00:00Z", "value": 26.8 },
-          { "time": "2026-02-20T06:00:00Z", "value": 28.5 }
-        ]
-      },
-      "humidity": {
-        "unit": "%",
-        "series": [
-          { "time": "2026-02-20T00:00:00Z", "value": 85 },
-          { "time": "2026-02-20T03:00:00Z", "value": 82 }
-        ]
-      }
+      "series": [
+        { "time": "2026-02-20T00:00:00Z", "value": 27.1, "attribute": "temperature" },
+        { "time": "2026-02-20T03:00:00Z", "value": 26.8, "attribute": "temperature" },
+        { "time": "2026-02-20T06:00:00Z", "value": 28.5, "attribute": "temperature" },
+        { "time": "2026-02-20T00:00:00Z", "value": 85, "attribute": "humidity" },
+        { "time": "2026-02-20T03:00:00Z", "value": 82, "attribute": "humidity" }
+      ],
+      "unit": "C"
     }
   }
 }
 ```
+
+> **Note:** `temporal` is a flat object with a single `series` array (matching the `TemporalProperty` Pydantic model). Each series entry includes an `attribute` field to identify the measurement type. `unit` reflects the first attribute's unit.
 
 **B. Static Properties (time-independent data):**
 ```json
@@ -1379,13 +1335,15 @@ civic-app/
     "coordinates": [103.851959, 1.290270]
   },
   "properties": {
-    "name": "Singapore",
-    "country": "Singapore",
-    "population": 5927000,
-    "area_km2": 728.6,
-    "elevation_m": 15,
-    "climate_type": "Tropical rainforest",
-    "is_capital": true
+    "static": {
+      "name": "Singapore",
+      "country": "Singapore",
+      "population": 5927000,
+      "area_km2": 728.6,
+      "elevation_m": 15,
+      "climate_type": "Tropical rainforest",
+      "is_capital": true
+    }
   }
 }
 ```
@@ -1416,8 +1374,11 @@ civic-app/
     "features_count": 50,
     "property_type": "temporal",
     "temporal_attributes": {
-      "temperature": {"unit": "C", "time_range": ["2026-02-20T00:00:00Z", "2026-02-20T06:00:00Z"]},
-      "humidity": {"unit": "%", "time_range": ["2026-02-20T00:00:00Z", "2026-02-20T03:00:00Z"]}
+      "series": [
+        {"time": "2026-02-20T00:00:00Z", "value": 27.1, "attribute": "temperature"},
+        {"time": "2026-02-20T00:00:00Z", "value": 85, "attribute": "humidity"}
+      ],
+      "unit": "C"
     }
   },
   "visualization_type": "map_temporal",
@@ -1441,23 +1402,6 @@ civic-app/
 }
 ```
 
-**Frontend Visualization Suggestions:**
-
-**For Temporal GeoJSON:**
-- Animated map with time slider/scrubber
-- Color-coded heatmap based on temporal values
-- Time-series chart on marker click
-- Play/pause animation controls
-- Multi-attribute toggle (temperature, humidity, etc.)
-- Temporal legend showing current time value ranges
-
-**For Static GeoJSON:**
-- Interactive map with markers (Leaflet, Mapbox, Google Maps)
-- Cluster markers for dense areas
-- Color-code by categorical properties
-- Show property details on click/hover
-- Filter by static attributes (e.g., population > 1M)
-
 ### 3. Generic Tabular Data
 
 **Backend Processing:**
@@ -1475,12 +1419,6 @@ civic-app/
   "metadata": {}
 }
 ```
-
-**Frontend Visualization Suggestions:**
-- Data table with search/filter (AG Grid, DataTables)
-- Bar/pie charts for categorical data
-- Scatter plots for correlations
-- Summary statistics cards
 
 ---
 
@@ -1505,37 +1443,6 @@ civic-app/
 ---
 
 ## Performance Optimization
-
-### Caching Strategy
-```python
-from functools import lru_cache
-from fastapi import FastAPI
-from fastapi_cache import FastAPICache
-from fastapi_cache.backends.redis import RedisBackend
-from fastapi_cache.decorator import cache
-import redis
-
-# Initialize Redis cache
-@app.on_event("startup")
-async def startup():
-    redis_client = redis.from_url("redis://localhost:6379")
-    FastAPICache.init(RedisBackend(redis_client), prefix="civic-app-cache")
-
-@cache(expire=60)  # Cache for 60 seconds
-async def fetch_and_process_data(endpoint_id: str, params: dict):
-    # Expensive API call and processing
-    pass
-```
-
-### Async Processing
-```python
-import asyncio
-
-async def process_multiple_queries(queries: List[str]):
-    tasks = [process_single_query(q) for q in queries]
-    results = await asyncio.gather(*tasks)
-    return results
-```
 
 ### Response Optimization
 - Use pagination for large datasets
