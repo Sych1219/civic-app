@@ -202,12 +202,12 @@ class ResponseFormatter:
         if property_type == 'temporal' and temporal_attributes:
             # Convert Pydantic models to dicts if needed
             if isinstance(temporal_attributes, dict):
-                response_data['temporal_attributes'] = {
+                response_data['temporal'] = {
                     k: v.model_dump() if hasattr(v, 'model_dump') else v 
                     for k, v in temporal_attributes.items()
                 }
             else:
-                response_data['temporal_attributes'] = temporal_attributes
+                response_data['temporal'] = temporal_attributes
         
         # Determine visualization type based on property type
         visualization_type = "map_temporal" if property_type == 'temporal' else "map"

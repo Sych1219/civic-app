@@ -82,7 +82,7 @@ Process a natural-language query and return structured, visualisation-ready data
     "center": {"lat": 1.3521, "lon": 103.8198},
     "features_count": 12,
     "property_type": "temporal",
-    "temporal_attributes": {
+    "temporal": {
       "series": [
         {"time": "2026-02-22T14:16:00+08:00", "value": 28.3, "attribute": "dbt_1m_f"}
       ],

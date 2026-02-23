@@ -127,7 +127,7 @@ Maps processed data to a `QueryResponse` with a `visualization_type` hint:
 
 | `data_type` | `visualization_type` | Extra Fields |
 |-------------|----------------------|--------------|
-| `geojson` (temporal) | `map_temporal` | `temporal_attributes`, `bounds`, `center` |
+| `geojson` (temporal) | `map_temporal` | `temporal`, `bounds`, `center` |
 | `geojson` (static) | `map` | `bounds`, `center`, `features_count` |
 | `time_series` | `time_series` | `chart_configs`, `summary_stats` |
 | `generic` | `generic` | raw data passthrough |
