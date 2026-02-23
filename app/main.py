@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 import logging
 import os
+import uvicorn
 from contextlib import asynccontextmanager
 
 from .models import QueryRequest, QueryResponse, HealthResponse
@@ -143,7 +144,6 @@ async def process_query(request: QueryRequest):
                 status="error",
                 data={},
                 visualization_type="error",
-                metadata={},
                 error="Could not understand the query. Please try rephrasing your question."
             )
         
@@ -187,7 +187,6 @@ async def process_query(request: QueryRequest):
             status="error",
             data={},
             visualization_type="error",
-            metadata={},
             error=f"External API error: {str(e)}"
         )
     
@@ -197,7 +196,6 @@ async def process_query(request: QueryRequest):
             status="error",
             data={},
             visualization_type="error",
-            metadata={},
             error=f"Validation error: {str(e)}"
         )
     
@@ -207,7 +205,6 @@ async def process_query(request: QueryRequest):
             status="error",
             data={},
             visualization_type="error",
-            metadata={},
             error=f"Internal server error: {str(e)}"
         )
 
@@ -240,4 +237,4 @@ async def list_endpoints():
 
 
 if __name__ == "__main__":
-    main()
+    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)

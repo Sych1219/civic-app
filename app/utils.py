@@ -170,7 +170,6 @@ class ResponseFormatter:
                     property_type = 'temporal'
                     temporal_attributes = props.temporal
             
-            metadata = {}
             # Convert FeatureCollection model to dict for response
             geojson_data = geojson_model.model_dump() if hasattr(geojson_model, 'model_dump') else geojson_model
         else:
@@ -179,8 +178,8 @@ class ResponseFormatter:
             bounds = data.get('bounds')
             property_type = data.get('property_type', 'static')
             features_count = data['features_count']
-            temporal_attributes = data.get('temporal_attributes')
-            metadata = data['metadata']
+            temporal_attributes = data.get('temporal')
+        
         
         # Calculate map center
         if bounds:
@@ -207,7 +206,7 @@ class ResponseFormatter:
                     for k, v in temporal_attributes.items()
                 }
             else:
-                response_data['temporal'] = temporal_attributes
+                response_data['temporal'] = temporal_attributes.model_dump() if hasattr(temporal_attributes, 'model_dump') else temporal_attributes
         
         # Determine visualization type based on property type
         visualization_type = "map_temporal" if property_type == 'temporal' else "map"
@@ -215,8 +214,7 @@ class ResponseFormatter:
         return QueryResponse(
             status="success",
             data=response_data,
-            visualization_type=visualization_type,
-            metadata=metadata
+            visualization_type=visualization_type
         )
     
     def format_time_series_response(self, data: Dict[str, Any], query: str) -> QueryResponse:
@@ -280,8 +278,7 @@ class ResponseFormatter:
                 "chart_configs": chart_configs,
                 "columns": list(df.columns)
             },
-            visualization_type="time_series",
-            metadata=data['metadata']
+            visualization_type="time_series"
         )
     
     def format_generic_response(self, data: Dict[str, Any]) -> QueryResponse:
@@ -297,6 +294,5 @@ class ResponseFormatter:
         return QueryResponse(
             status="success",
             data=data['data'],
-            visualization_type="generic",
-            metadata=data['metadata']
+            visualization_type="generic"
         )

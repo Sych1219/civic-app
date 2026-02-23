@@ -29,7 +29,6 @@ class QueryResponse(BaseModel):
     status: str = Field(..., description="Response status: success or error")
     data: Dict[str, Any] = Field(..., description="Processed data ready for visualization")
     visualization_type: str = Field(..., description="Type of visualization: map, time_series, generic, error")
-    metadata: Dict[str, Any] = Field(..., description="Metadata about the response")
     error: Optional[str] = Field(None, description="Error message if status is error")
     
     model_config = {
@@ -42,7 +41,6 @@ class QueryResponse(BaseModel):
                         "summary_stats": {"mean": 28.5, "min": 26.0, "max": 31.0}
                     },
                     "visualization_type": "time_series",
-                    "metadata": {"endpoint_id": "uuid-123", "timestamp": "2026-02-08T10:00:00"},
                     "error": None
                 }
             ]

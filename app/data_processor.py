@@ -472,8 +472,7 @@ class DataProcessor:
             {
                 'data_type': 'time_series',
                 'dataframe': pd.DataFrame,
-                'summary_stats': {...},
-                'metadata': {...}
+                'summary_stats': {...}
             }
         """
         # Extract readings/data
@@ -509,12 +508,7 @@ class DataProcessor:
         return {
             'data_type': 'time_series',
             'dataframe': df,
-            'summary_stats': summary_stats,
-            'metadata': {
-                'timestamp': full_response.get('invokedAt'),
-                'endpoint_id': full_response.get('endpointId'),
-                'record_count': len(df)
-            }
+            'summary_stats': summary_stats
         }
     
     def process_generic(
@@ -532,17 +526,12 @@ class DataProcessor:
         Returns:
             {
                 'data_type': 'generic',
-                'data': response_data,
-                'metadata': {...}
+                'data': response_data
             }
         """
         return {
             'data_type': 'generic',
-            'data': response_data,
-            'metadata': {
-                'timestamp': full_response.get('invokedAt'),
-                'endpoint_id': full_response.get('endpointId')
-            }
+            'data': response_data
         }
     
     def _calculate_bounds(self, coords: List[List[float]]) -> Optional[List[List[float]]]:
