@@ -176,7 +176,7 @@ async def process_query(request: QueryRequest):
         
         # Step 5: Format response for frontend
         logger.info("Step 5: Formatting response...")
-        result = components['formatter'].format_response(processed, request.query)
+        result = components['formatter'].format_response(processed, request.query, endpoint_schema)
         
         logger.info("Query processed successfully")
         return result

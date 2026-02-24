@@ -100,13 +100,14 @@ class QueryBuilder:
 class ResponseFormatter:
     """Format processed data into API response models."""
     
-    def format_response(self, processed_data: Union[Dict[str, Any], Any], user_query: str) -> QueryResponse:
+    def format_response(self, processed_data: Union[Dict[str, Any], Any], user_query: str, endpoint_schema: Dict[str, Any] = None) -> QueryResponse:
         """
         Format processed data into API response.
         
         Args:
             processed_data: Processed data from DataProcessor (dict or Pydantic model)
             user_query: Original user query
+            endpoint_schema: Matched endpoint schema, used to extract layer_id and layer_label
             
         Returns:
             QueryResponse with formatted data and visualization hints
@@ -118,20 +119,25 @@ class ResponseFormatter:
         else:
             data_type = processed_data.get('data_type', 'generic')
         
+        layer_id = endpoint_schema.get('layer_id') if endpoint_schema else None
+        layer_label = endpoint_schema.get('layer_label') if endpoint_schema else None
+        
         if data_type == 'geojson':
-            return self.format_map_response(processed_data)
+            return self.format_map_response(processed_data, layer_id=layer_id, layer_label=layer_label)
         elif data_type == 'time_series':
             return self.format_time_series_response(processed_data, user_query)
         else:
             return self.format_generic_response(processed_data)
     
-    def format_map_response(self, data: Union[Dict[str, Any], GeoJSONProcessedResponse]) -> QueryResponse:
+    def format_map_response(self, data: Union[Dict[str, Any], GeoJSONProcessedResponse], layer_id: str = None, layer_label: str = None) -> QueryResponse:
         """
         Format GeoJSON data for map visualization.
         Supports both temporal and static GeoJSON properties.
         
         Args:
             data: Processed GeoJSON data (can be dict or GeoJSONProcessedResponse model)
+            layer_id: Stable machine identifier for the Mapbox layer
+            layer_label: Human-readable layer name for the LayerToggle panel
             
         Returns:
             QueryResponse with map visualization hints
@@ -214,7 +220,9 @@ class ResponseFormatter:
         return QueryResponse(
             status="success",
             data=response_data,
-            visualization_type=visualization_type
+            visualization_type=visualization_type,
+            layer_id=layer_id,
+            layer_label=layer_label
         )
     
     def format_time_series_response(self, data: Dict[str, Any], query: str) -> QueryResponse:

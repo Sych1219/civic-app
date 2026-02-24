@@ -28,7 +28,9 @@ class QueryResponse(BaseModel):
     """Response model for query endpoint."""
     status: str = Field(..., description="Response status: success or error")
     data: Dict[str, Any] = Field(..., description="Processed data ready for visualization")
-    visualization_type: str = Field(..., description="Type of visualization: map, time_series, generic, error")
+    visualization_type: str = Field(..., description="Type of visualization: map, map_temporal, time_series, generic, error")
+    layer_id: Optional[str] = Field(None, description="Stable machine identifier for the map layer (map/map_temporal only)")
+    layer_label: Optional[str] = Field(None, description="Human-readable layer name for the LayerToggle panel (map/map_temporal only)")
     error: Optional[str] = Field(None, description="Error message if status is error")
     
     model_config = {
@@ -41,6 +43,8 @@ class QueryResponse(BaseModel):
                         "summary_stats": {"mean": 28.5, "min": 26.0, "max": 31.0}
                     },
                     "visualization_type": "time_series",
+                    "layer_id": None,
+                    "layer_label": None,
                     "error": None
                 }
             ]
