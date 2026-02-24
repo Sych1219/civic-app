@@ -90,6 +90,8 @@ Process a natural-language query and return structured, visualisation-ready data
     }
   },
   "visualization_type": "map_temporal",
+  "layer_id": "temperature",
+  "layer_label": "Air Temperature",
   "error": null
 }
 ```
@@ -183,6 +185,8 @@ All models are defined in `app/models.py` using Pydantic v2.
 | `status` | `str` | `"success"` or `"error"` |
 | `data` | `dict` | Processed data ready for visualisation |
 | `visualization_type` | `str` | One of: `map`, `map_temporal`, `time_series`, `generic`, `error` |
+| `layer_id` | `str \| null` | Stable machine identifier for the layer (e.g. `"temperature"`, `"taxi"`, `"pm25"`). Used as the key in the Dashboard `layers` state and as the prefix for all Mapbox source/layer IDs. Present only when `visualization_type` is `map` or `map_temporal`; `null` otherwise. |
+| `layer_label` | `str \| null` | Human-readable layer name shown in the `LayerToggle` panel (e.g. `"Air Temperature"`). Present only when `visualization_type` is `map` or `map_temporal`; `null` otherwise. |
 | `error` | `str \| null` | Error message when `status` is `"error"` |
 
 ### `HealthResponse`

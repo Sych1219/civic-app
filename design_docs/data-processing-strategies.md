@@ -225,6 +225,8 @@ All detected items are **merged into a single Feature** with `MultiPoint` geomet
     }
   },
   "visualization_type": "map_temporal",
+  "layer_id": "temperature",
+  "layer_label": "Air Temperature",
   "error": null
 }
 ```
