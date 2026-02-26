@@ -128,7 +128,11 @@ Process a natural-language query and return structured, visualisation-ready data
   "status": "error",
   "data": {},
   "visualization_type": "error",
-  "error": "Could not understand the query. Please try rephrasing your question."
+  "error": "Could not understand the query. Please try rephrasing your question.",
+  "session_id": "session-uuid-123",
+  "message_id": "msg-uuid-003",
+  "content": "I'm sorry, I couldn't find a matching dataset for that question. Try asking: 'Show me air temperature', 'What are PM2.5 levels today?', or 'Where are taxis right now?'",
+  "data_context": null
 }
 ```
 

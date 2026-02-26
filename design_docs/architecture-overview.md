@@ -7,8 +7,8 @@
 - [System Architecture](#system-architecture)
 - [Request Lifecycle](#request-lifecycle)
 - [Component Responsibilities](#component-responsibilities)
-  - [LLMSummarizer](#llmsummarizer-appchatpy--when-session_id-is-supplied) *(when session_id supplied)*
-  - [SessionStore](#sessionstore-appchatpy--when-session_id-is-supplied) *(when session_id supplied)*
+  - [LLMSummarizer](#llmsummarizer-appchatpy--always-active)
+  - [SessionStore](#sessionstore-appchatpy--always-active)
 - [Technology Stack](#technology-stack)
 - [Project Structure](#project-structure)
 - [Performance Characteristics](#performance-characteristics)
@@ -164,9 +164,7 @@ Maps processed data to a `QueryResponse` with a `visualization_type` hint:
 | `time_series` | `time_series` | `chart_configs`, `summary_stats` |
 | `generic` | `generic` | raw data passthrough |
 
-### LLMSummarizer (`app/chat.py`) — *always active*
-
-Takes the `QueryResponse` produced by `ResponseFormatter` and generates a natural-language summary:
+### LLMSummarizer (`app/chat.py`) — *always active* and generates a natural-language summary:
 
 - **Input:** `QueryResponse`, user query string, and the last 10 turns of session history.
 - **Prompt construction:** Selects a `visualization_type`-specific data block (stats for `time_series`, bounds/count for `map`, etc.) and injects it into a structured system prompt.
@@ -231,7 +229,7 @@ civic-app/
 │   ├── api_client.py              # External API trigger (httpx)
 │   ├── data_processor.py          # GeoJSON/time-series/generic processing
 │   ├── utils.py                   # QueryBuilder + ResponseFormatter
-│   └── chat.py                    # LLMSummarizer + SessionStore (activated when session_id supplied)
+│   └── chat.py                    # LLMSummarizer + SessionStore (always active on every request)
 │
 ├── design_docs/
 │   ├── civic-app-architecture.md  # Index → links to sub-docs
