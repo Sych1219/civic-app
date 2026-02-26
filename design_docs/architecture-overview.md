@@ -7,6 +7,8 @@
 - [System Architecture](#system-architecture)
 - [Request Lifecycle](#request-lifecycle)
 - [Component Responsibilities](#component-responsibilities)
+  - [LLMSummarizer](#llmsummarizer-appchatpy--when-session_id-is-supplied) *(when session_id supplied)*
+  - [SessionStore](#sessionstore-appchatpy--when-session_id-is-supplied) *(when session_id supplied)*
 - [Technology Stack](#technology-stack)
 - [Project Structure](#project-structure)
 - [Performance Characteristics](#performance-characteristics)
@@ -59,6 +61,25 @@
 └─────────────────────────────────────────────────────────────────┘
 ```
 
+### Chat Mode (always active)
+
+After step 6, two additional stages always run:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  7. LLM SUMMARIZER             (app/chat.py → LLMSummarizer)  │
+│     Builds prompt from QueryResponse + session history         │
+│     → GPT-4 produces plain-English assistant_message.content   │
+└────────────────────────────┬────────────────────────────────────┘
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  8. SESSION STORE              (app/chat.py → SessionStore)    │
+│     Load history before step 2 · Persist user + assistant      │
+│     turns after step 7 · Manage 24-hour session expiry         │
+└─────────────────────────────────────────────────────────────────┘
+```
+
 ---
 
 ## Request Lifecycle
@@ -75,6 +96,17 @@ A single `POST /api/query` request flows through six stages:
 | **6** | `ResponseFormatter` | Attach visualization hints, chart configs, and map metadata |
 
 > Confidence threshold: if Step 2 returns `confidence < 0.5`, the request short-circuits with an error asking the user to rephrase.
+
+### Chat Mode — Additional Steps (always active)
+
+Steps 0, 7, and 8 always run on every request:
+
+| Step | Component | What Happens |
+|------|-----------|--------------|
+| **0** | `SessionStore` | Load last 10 turns; auto-create session UUID if `session_id` omitted on first call |
+| **1–6** | *(core pipeline)* | Endpoint matching, query building, API trigger, data processing, response formatting |
+| **7** | `LLMSummarizer` | Build prompt from `QueryResponse` + session history → GPT-4 → `content` field in response |
+| **8** | `SessionStore` | Persist `ChatHistoryEntry` for this query + response turn |
 
 ---
 
@@ -132,6 +164,35 @@ Maps processed data to a `QueryResponse` with a `visualization_type` hint:
 | `time_series` | `time_series` | `chart_configs`, `summary_stats` |
 | `generic` | `generic` | raw data passthrough |
 
+### LLMSummarizer (`app/chat.py`) — *always active*
+
+Takes the `QueryResponse` produced by `ResponseFormatter` and generates a natural-language summary:
+
+- **Input:** `QueryResponse`, user query string, and the last 10 turns of session history.
+- **Prompt construction:** Selects a `visualization_type`-specific data block (stats for `time_series`, bounds/count for `map`, etc.) and injects it into a structured system prompt.
+- **Output:** A single plain-English paragraph — no markdown, no invented numbers.
+- **Model:** GPT-4 via LangChain (`langchain-openai`).
+
+| `visualization_type` | Data fed to LLM |
+|----------------------|-----------------|
+| `time_series` | `summary_stats`, record count, `y_label`, user query |
+| `map` | `features_count`, `bounds`, `layer_label`, user query |
+| `map_temporal` | `features_count`, first/last temporal values, `unit`, user query |
+| `generic` | First 5 `data.records`, user query |
+| `error` | `error` string, available endpoint topics, user query |
+
+### SessionStore (`app/chat.py`) — *always active*
+
+In-memory conversation store keyed by `session_id` (UUID v4):
+
+| Rule | Detail |
+|------|--------|
+| **Creation** | Auto-generated UUID v4 when `session_id` is omitted in the request |
+| **History window** | Last 10 turns (5 user + 5 assistant) supplied to the LLM per call |
+| **Storage** | `ChatHistoryEntry` only (role, message_id, content, timestamp) — `query_response` JSON is **not** stored |
+| **Expiry** | Sessions expire after 24 hours of inactivity |
+| **MVP backend** | In-memory dict; migrate to Redis / PostgreSQL for production persistence |
+
 ---
 
 ## Technology Stack
@@ -169,12 +230,14 @@ civic-app/
 │   ├── endpoint_matcher.py        # Semantic search + LLM param extraction
 │   ├── api_client.py              # External API trigger (httpx)
 │   ├── data_processor.py          # GeoJSON/time-series/generic processing
-│   └── utils.py                   # QueryBuilder + ResponseFormatter
+│   ├── utils.py                   # QueryBuilder + ResponseFormatter
+│   └── chat.py                    # LLMSummarizer + SessionStore (activated when session_id supplied)
 │
 ├── design_docs/
 │   ├── civic-app-architecture.md  # Index → links to sub-docs
 │   ├── architecture-overview.md   # ← you are here
 │   ├── api-contract.md            # REST API contract & models
+│   ├── chat-message-contract.md   # Chat endpoint, LLM summary, session management
 │   ├── data-processing-strategies.md
 │   ├── endpoint-schema-api-response.json
 │   └── data-gov-apis-definations/
@@ -193,7 +256,7 @@ civic-app/
 | Concern | Approach |
 |---------|----------|
 | Embedding computation | One-time on startup; cached in memory |
-| LLM calls | Only 1 per request (parameter extraction) |
+| LLM calls | Always 2 per request: parameter extraction (step 2) + LLM summarisation (step 7) |
 | Async I/O | `httpx.AsyncClient` for external API calls |
 | Large datasets | Pagination, gzip compression |
 | Abuse prevention | Rate limiting (to be added) |
@@ -204,6 +267,6 @@ civic-app/
 
 Ordered by expected impact:
 
-1. **Session management** — conversation memory via session IDs for multi-turn queries.
+1. **Session management** ✅ — `POST /api/query` delivers server-managed conversation history when `session_id` is supplied (in-memory MVP); migrate to Redis / PostgreSQL for production persistence.
 2. **WebSocket streaming** — real-time data push for live weather / transport feeds.
 3. **Batch query endpoint** — process multiple queries in a single request to reduce round-trips.

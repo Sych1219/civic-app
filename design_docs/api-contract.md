@@ -11,6 +11,11 @@
   - [GET /health](#get-health)
   - [GET /](#get-)
 - [Models](#models)
+  - [QueryRequest](#queryrequest)
+  - [QueryResponse](#queryresponse)
+  - [DataContext](#datacontext)
+  - [HealthResponse](#healthresponse)
+  - [GeoJSON Models](#geojson-models-in-appdataprocessorpy)
 - [Error Handling](#error-handling)
 - [Interactive Docs](#interactive-docs)
 
@@ -29,7 +34,7 @@ https://<deployed-host>    # production
 
 ### `POST /api/query`
 
-Process a natural-language query and return structured, visualisation-ready data.
+Process a natural-language query and return structured, visualisation-ready data. LLM summarisation and conversation history are always active. On the first call `session_id` may be omitted; the server generates one and returns it. The frontend must echo it on every subsequent request.
 
 **Request**
 
@@ -37,7 +42,7 @@ Process a natural-language query and return structured, visualisation-ready data
 // Content-Type: application/json
 {
   "query": "Show me air temperature for today",   // required
-  "session_id": "optional-session-uuid",           // optional
+  "session_id": "session-uuid-123",               // omit only on the very first call; server creates one
   "context": {}                                    // optional
 }
 ```
@@ -104,6 +109,29 @@ Process a natural-language query and return structured, visualisation-ready data
   "data": {},
   "visualization_type": "error",
   "error": "Could not understand the query. Please try rephrasing your question."
+}
+```
+
+**Response — success (with LLM summary)**
+
+```jsonc
+// HTTP 200 — chat fields are always present alongside the base QueryResponse fields
+{
+  "status": "success",
+  "data": { /* ... same structure as above ... */ },
+  "visualization_type": "time_series",
+  "layer_id": null,
+  "layer_label": null,
+  "error": null,
+  "session_id": "session-uuid-123",
+  "message_id": "msg-uuid-001",
+  "content": "Across 60 weather stations in Singapore, the air temperature is currently averaging 28.5 °C, ranging from 26.0 °C to 31.0 °C.",
+  "data_context": {
+    "endpoint_id": "3a5f2831-815b-4a0a-bbc6-38e54598c8d9",
+    "endpoint_description": "Get real-time air temperature readings from weather stations",
+    "confidence": 0.94,
+    "triggered_at": "2026-02-26T10:00:00+08:00"
+  }
 }
 ```
 
@@ -175,7 +203,7 @@ All models are defined in `app/models.py` using Pydantic v2.
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `query` | `str` | ✅ | Natural-language query from user |
-| `session_id` | `str \| null` | ❌ | Optional session ID for conversation tracking |
+| `session_id` | `str \| null` | ❌ on first call only | Server auto-creates and returns one if omitted; must be echoed on all subsequent requests |
 | `context` | `dict \| null` | ❌ | Optional context data |
 
 ### `QueryResponse`
@@ -188,6 +216,10 @@ All models are defined in `app/models.py` using Pydantic v2.
 | `layer_id` | `str \| null` | Stable machine identifier for the layer (e.g. `"temperature"`, `"taxi"`, `"pm25"`). Used as the key in the Dashboard `layers` state and as the prefix for all Mapbox source/layer IDs. Present only when `visualization_type` is `map` or `map_temporal`; `null` otherwise. |
 | `layer_label` | `str \| null` | Human-readable layer name shown in the `LayerToggle` panel (e.g. `"Air Temperature"`). Present only when `visualization_type` is `map` or `map_temporal`; `null` otherwise. |
 | `error` | `str \| null` | Error message when `status` is `"error"` |
+| `session_id` | `str` | Echoed or newly created session UUID. Always present; auto-created on first call. |
+| `message_id` | `str` | Server-generated UUID v4 for this response turn. Always present. |
+| `content` | `str` | LLM-generated plain-English summary; an LLM apology when `status` is `"error"`. Always present. |
+| `data_context` | `DataContext \| null` | API call metadata (matched endpoint, confidence). Always present; `null` when `status` is `"error"`. |
 
 ### `HealthResponse`
 
@@ -208,6 +240,17 @@ All models are defined in `app/models.py` using Pydantic v2.
 | `Feature` | Standard GeoJSON Feature with typed geometry & properties |
 | `FeatureCollection` | Standard GeoJSON FeatureCollection |
 | `GeoJSONProcessedResponse` | Wrapper: `{"data_type": "geojson", "geojson": FeatureCollection}` |
+
+### `DataContext`
+
+Sub-model nested in `QueryResponse.data_context`. Always present when `status` is `"success"`; `null` when `status` is `"error"`.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `endpoint_id` | `str` | UUID of the matched gov API endpoint |
+| `endpoint_description` | `str` | Human-readable description from the schema |
+| `confidence` | `float` | Matching confidence score `[0, 1]` |
+| `triggered_at` | `str` | ISO-8601 timestamp of the external API call |
 
 ---
 

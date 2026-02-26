@@ -3,6 +3,8 @@
 > How `DataProcessor` detects, converts, and normalises API responses into visualisation-ready formats.
 >
 > Implementation: `app/data_processor.py`
+>
+> The `QueryResponse` produced by this pipeline is always consumed by the `LLMSummarizer` on every call to `POST /api/query` — it reads `visualization_type`, `summary_stats`, and other visualization-specific fields directly from it. See [chat-message-contract.md](chat-message-contract.md) for the LLM input contract per visualization type.
 
 ## Table of Contents
 
