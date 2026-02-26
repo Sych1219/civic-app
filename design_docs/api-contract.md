@@ -72,7 +72,18 @@ Process a natural-language query and return structured, visualisation-ready data
     "columns": ["station_id", "timestamp", "value"]
   },
   "visualization_type": "time_series",
-  "error": null
+  "layer_id": null,
+  "layer_label": null,
+  "error": null,
+  "session_id": "session-uuid-123",
+  "message_id": "msg-uuid-001",
+  "content": "Across 60 weather stations in Singapore, the air temperature is currently averaging 28.5 °C, ranging from 26.0 °C to 31.0 °C.",
+  "data_context": {
+    "endpoint_id": "3a5f2831-815b-4a0a-bbc6-38e54598c8d9",
+    "endpoint_description": "Get real-time air temperature readings from weather stations",
+    "confidence": 0.94,
+    "triggered_at": "2026-02-22T10:00:00+08:00"
+  }
 }
 ```
 
@@ -97,7 +108,16 @@ Process a natural-language query and return structured, visualisation-ready data
   "visualization_type": "map_temporal",
   "layer_id": "temperature",
   "layer_label": "Air Temperature",
-  "error": null
+  "error": null,
+  "session_id": "session-uuid-123",
+  "message_id": "msg-uuid-002",
+  "content": "Air temperature readings are available across 12 stations in Singapore, with the latest value at 28.3 °C.",
+  "data_context": {
+    "endpoint_id": "3a5f2831-815b-4a0a-bbc6-38e54598c8d9",
+    "endpoint_description": "Get real-time air temperature readings from weather stations",
+    "confidence": 0.94,
+    "triggered_at": "2026-02-22T14:16:00+08:00"
+  }
 }
 ```
 
@@ -109,29 +129,6 @@ Process a natural-language query and return structured, visualisation-ready data
   "data": {},
   "visualization_type": "error",
   "error": "Could not understand the query. Please try rephrasing your question."
-}
-```
-
-**Response — success (with LLM summary)**
-
-```jsonc
-// HTTP 200 — chat fields are always present alongside the base QueryResponse fields
-{
-  "status": "success",
-  "data": { /* ... same structure as above ... */ },
-  "visualization_type": "time_series",
-  "layer_id": null,
-  "layer_label": null,
-  "error": null,
-  "session_id": "session-uuid-123",
-  "message_id": "msg-uuid-001",
-  "content": "Across 60 weather stations in Singapore, the air temperature is currently averaging 28.5 °C, ranging from 26.0 °C to 31.0 °C.",
-  "data_context": {
-    "endpoint_id": "3a5f2831-815b-4a0a-bbc6-38e54598c8d9",
-    "endpoint_description": "Get real-time air temperature readings from weather stations",
-    "confidence": 0.94,
-    "triggered_at": "2026-02-26T10:00:00+08:00"
-  }
 }
 ```
 

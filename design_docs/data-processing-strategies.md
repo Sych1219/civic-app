@@ -4,7 +4,7 @@
 >
 > Implementation: `app/data_processor.py`
 >
-> The `QueryResponse` produced by this pipeline is always consumed by the `LLMSummarizer` on every call to `POST /api/query` — it reads `visualization_type`, `summary_stats`, and other visualization-specific fields directly from it. See [chat-message-contract.md](chat-message-contract.md) for the LLM input contract per visualization type.
+> The `QueryResponse` produced by this pipeline is always consumed by the `LLMSummarizer` on every call to `POST /api/query` — it reads `visualization_type`, `summary_stats`, and other visualization-specific fields directly from it. See [api-contract.md](api-contract.md) for the LLM input contract per visualization type.
 
 ## Table of Contents
 
@@ -229,7 +229,16 @@ All detected items are **merged into a single Feature** with `MultiPoint` geomet
   "visualization_type": "map_temporal",
   "layer_id": "temperature",
   "layer_label": "Air Temperature",
-  "error": null
+  "error": null,
+  "session_id": "session-uuid-123",
+  "message_id": "msg-uuid-001",
+  "content": "Air temperature readings are available across 2 stations in Singapore, with the latest value at 28.3 °C.",
+  "data_context": {
+    "endpoint_id": "3a5f2831-815b-4a0a-bbc6-38e54598c8d9",
+    "endpoint_description": "Get real-time air temperature readings from weather stations",
+    "confidence": 0.94,
+    "triggered_at": "2026-02-20T14:16:00+08:00"
+  }
 }
 ```
 

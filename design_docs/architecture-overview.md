@@ -236,8 +236,7 @@ civic-app/
 ├── design_docs/
 │   ├── civic-app-architecture.md  # Index → links to sub-docs
 │   ├── architecture-overview.md   # ← you are here
-│   ├── api-contract.md            # REST API contract & models
-│   ├── chat-message-contract.md   # Chat endpoint, LLM summary, session management
+│   ├── api-contract.md            # REST API contract, models, LLM summary fields, session semantics
 │   ├── data-processing-strategies.md
 │   ├── endpoint-schema-api-response.json
 │   └── data-gov-apis-definations/
