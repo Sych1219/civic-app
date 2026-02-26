@@ -10,14 +10,17 @@ from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 import logging
 import os
+import uuid
 import uvicorn
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 
-from .models import QueryRequest, QueryResponse, HealthResponse
+from .models import QueryRequest, QueryResponse, HealthResponse, DataContext
 from .endpoint_matcher import EndpointMatcher
 from .api_client import APITrigger, APIError
 from .data_processor import DataProcessor
 from .utils import QueryBuilder, ResponseFormatter
+from .chat import SessionStore, LLMSummarizer
 
 # Load environment variables
 load_dotenv()
@@ -56,8 +59,18 @@ async def lifespan(app: FastAPI):
         components['trigger'] = APITrigger(api_base_url)
         components['processor'] = DataProcessor()
         components['formatter'] = ResponseFormatter()
+        components['session_store'] = SessionStore()
         
-        logger.info("✓ All components initialized successfully")
+        # Initialize LLM summarizer with available endpoint topics
+        summarizer = LLMSummarizer()
+        topic_descriptions = [
+            schema.get('description', '')
+            for schema in components['matcher'].endpoint_index.values()
+        ]
+        summarizer.set_available_topics(topic_descriptions)
+        components['summarizer'] = summarizer
+        
+        logger.info("✓ All components initialized successfully (chat mode active)")
         
     except Exception as e:
         logger.error(f"Failed to initialize components: {e}", exc_info=True)
@@ -112,26 +125,34 @@ async def health_check():
 @app.post("/api/query", response_model=QueryResponse)
 async def process_query(request: QueryRequest):
     """
-    Process a natural language query and return structured data.
+    Process a natural language query and return structured data with LLM summary.
     
-    This endpoint:
-    1. Matches the user query to the appropriate Singapore government data API
-    2. Extracts parameters from the query
-    3. Triggers the external API
-    4. Processes the response into visualization-ready format
-    5. Returns structured JSON with visualization hints
-    
-    Args:
-        request: Query request containing user's natural language query
-        
-    Returns:
-        QueryResponse with processed data and visualization hints
+    Request lifecycle (always includes chat):
+      0. SessionStore  — load history; auto-create session UUID if omitted
+      1. EndpointMatcher — embed query → cosine similarity → LLM param extraction
+      2. QueryBuilder   — validate & type-cast params against endpoint schema
+      3. APITrigger     — POST to external trigger API
+      4. DataProcessor  — detect data type → GeoJSON / DataFrame / generic
+      5. ResponseFormatter — attach visualization hints, chart configs, map metadata
+      6. LLMSummarizer  — build prompt from QueryResponse + history → GPT-4 → content
+      7. SessionStore   — persist user + assistant turns
     """
     
     logger.info(f"Received query: {request.query}")
     
+    session_store: SessionStore = components['session_store']
+    summarizer: LLMSummarizer = components['summarizer']
+    
+    # ── Step 0: Session management ──────────────────────────────
+    session_id = session_store.resolve_session_id(request.session_id)
+    history = session_store.get_history(session_id)
+    user_message_id = session_store.add_user_turn(session_id, request.query)
+    
+    # Generate a message_id for the assistant response
+    assistant_message_id = str(uuid.uuid4())
+    
     try:
-        # Step 1: Match endpoint and extract parameters
+        # ── Step 1: Match endpoint and extract parameters ───────
         logger.info("Step 1: Matching endpoint...")
         endpoint_match = components['matcher'].match_endpoint(request.query)
         
@@ -140,14 +161,24 @@ async def process_query(request: QueryRequest):
         
         # Check confidence threshold
         if endpoint_match.get('confidence', 0) < 0.5:
-            return QueryResponse(
+            error_response = QueryResponse(
                 status="error",
                 data={},
                 visualization_type="error",
-                error="Could not understand the query. Please try rephrasing your question."
+                error="Could not understand the query. Please try rephrasing your question.",
+                session_id=session_id,
+                message_id=assistant_message_id,
+                content="",  # placeholder, will be replaced by LLM
+                data_context=None,
             )
+            # LLM summarization for error
+            content = await summarizer.summarize(error_response, request.query, history)
+            error_response.content = content
+            # Persist assistant turn
+            session_store.add_assistant_turn(session_id, assistant_message_id, content)
+            return error_response
         
-        # Step 2: Build request payload
+        # ── Step 2: Build request payload ───────────────────────
         logger.info("Step 2: Building request payload...")
         endpoint_schema = components['matcher'].endpoint_index.get(
             endpoint_match['endpoint_id']
@@ -161,7 +192,7 @@ async def process_query(request: QueryRequest):
         
         logger.debug(f"Payload: {payload}")
         
-        # Step 3: Trigger external API
+        # ── Step 3: Trigger external API ────────────────────────
         logger.info("Step 3: Triggering external API...")
         response = await components['trigger'].trigger_endpoint(
             endpoint_match['endpoint_id'],
@@ -170,43 +201,90 @@ async def process_query(request: QueryRequest):
         
         logger.info("API call successful")
         
-        # Step 4: Process data
+        # Build DataContext
+        data_context = DataContext(
+            endpoint_id=endpoint_match['endpoint_id'],
+            endpoint_description=endpoint_schema.get('description', ''),
+            confidence=endpoint_match.get('confidence', 0.0),
+            triggered_at=datetime.now(timezone.utc).isoformat(),
+        )
+        
+        # ── Step 4: Process data ────────────────────────────────
         logger.info("Step 4: Processing response data...")
         processed = components['processor'].process_response(response)
         
-        # Step 5: Format response for frontend
+        # ── Step 5: Format response for frontend ────────────────
         logger.info("Step 5: Formatting response...")
-        result = components['formatter'].format_response(processed, request.query, endpoint_schema)
+        result = components['formatter'].format_response(
+            processed, request.query, endpoint_schema
+        )
+        
+        # Inject chat & context fields
+        result.session_id = session_id
+        result.message_id = assistant_message_id
+        result.data_context = data_context
+        
+        # ── Step 6: LLM summarization ──────────────────────────
+        logger.info("Step 6: Generating LLM summary...")
+        content = await summarizer.summarize(result, request.query, history)
+        result.content = content
+        
+        # ── Step 7: Persist assistant turn ──────────────────────
+        session_store.add_assistant_turn(session_id, assistant_message_id, content)
         
         logger.info("Query processed successfully")
         return result
         
     except APIError as e:
         logger.error(f"API error: {e}")
-        return QueryResponse(
+        error_response = QueryResponse(
             status="error",
             data={},
             visualization_type="error",
-            error=f"External API error: {str(e)}"
+            error=f"External API error: {str(e)}",
+            session_id=session_id,
+            message_id=assistant_message_id,
+            content="",
+            data_context=None,
         )
+        content = await summarizer.summarize(error_response, request.query, history)
+        error_response.content = content
+        session_store.add_assistant_turn(session_id, assistant_message_id, content)
+        return error_response
     
     except ValueError as e:
         logger.error(f"Validation error: {e}")
-        return QueryResponse(
+        error_response = QueryResponse(
             status="error",
             data={},
             visualization_type="error",
-            error=f"Validation error: {str(e)}"
+            error=f"Validation error: {str(e)}",
+            session_id=session_id,
+            message_id=assistant_message_id,
+            content="",
+            data_context=None,
         )
+        content = await summarizer.summarize(error_response, request.query, history)
+        error_response.content = content
+        session_store.add_assistant_turn(session_id, assistant_message_id, content)
+        return error_response
     
     except Exception as e:
         logger.error(f"Unexpected error: {e}", exc_info=True)
-        return QueryResponse(
+        error_response = QueryResponse(
             status="error",
             data={},
             visualization_type="error",
-            error=f"Internal server error: {str(e)}"
+            error=f"Internal server error: {str(e)}",
+            session_id=session_id,
+            message_id=assistant_message_id,
+            content="",
+            data_context=None,
         )
+        content = await summarizer.summarize(error_response, request.query, history)
+        error_response.content = content
+        session_store.add_assistant_turn(session_id, assistant_message_id, content)
+        return error_response
 
 
 @app.get("/api/endpoints", response_model=dict)

@@ -137,7 +137,7 @@ class LLMSummarizer:
     """
 
     def __init__(self, available_topics: Optional[List[str]] = None) -> None:
-        self.llm = ChatOpenAI(model="gpt-4", temperature=0.3)
+        self.llm = ChatOpenAI(model="gpt-5-mini", temperature=0.3)
         self.available_topics = available_topics or []
 
     def set_available_topics(self, topics: List[str]) -> None:
@@ -162,22 +162,19 @@ class LLMSummarizer:
             Plain-English summary string.
         """
         viz_type = query_response.visualization_type
-        data = query_response.data
 
         # Build conversation context from history
         history_text = self._format_history(history)
-
-        # Select data block by visualization type
+        data = query_response.data
+        # Feed data directly into the data block
         if viz_type == "error":
             data_block = self._error_block(query_response.error)
-        elif viz_type == "time_series":
-            data_block = self._time_series_block(data)
-        elif viz_type == "map":
-            data_block = self._map_block(data, query_response.layer_label)
-        elif viz_type == "map_temporal":
-            data_block = self._map_temporal_block(data, query_response.layer_label)
         else:
-            data_block = self._generic_block(data)
+            data_block = (
+                f"Visualization: {viz_type}\n"
+                f"Layer: {query_response.layer_label or 'N/A'}\n"
+                f"Data: {data}"
+            )
 
         prompt = ChatPromptTemplate.from_messages([
             (
@@ -209,46 +206,6 @@ class LLMSummarizer:
             return self._fallback_summary(viz_type, data, query_response.error)
 
     # ── data-block builders ─────────────────────
-
-    def _time_series_block(self, data: Dict[str, Any]) -> str:
-        stats = data.get("summary_stats", {})
-        record_count = len(data.get("records", []))
-        charts = data.get("chart_configs", [])
-        y_label = charts[0].get("y_label", "Value") if charts else "Value"
-        return (
-            f"Visualization: time_series\n"
-            f"Record count: {record_count}\n"
-            f"Y-axis label: {y_label}\n"
-            f"Summary statistics: {stats}"
-        )
-
-    def _map_block(self, data: Dict[str, Any], layer_label: Optional[str]) -> str:
-        return (
-            f"Visualization: map (static)\n"
-            f"Layer: {layer_label or 'unknown'}\n"
-            f"Features count: {data.get('features_count', 'N/A')}\n"
-            f"Bounds: {data.get('bounds')}\n"
-        )
-
-    def _map_temporal_block(self, data: Dict[str, Any], layer_label: Optional[str]) -> str:
-        temporal = data.get("temporal", {})
-        series = temporal.get("series", []) if isinstance(temporal, dict) else []
-        unit = temporal.get("unit", "") if isinstance(temporal, dict) else ""
-        first_val = series[0] if series else {}
-        last_val = series[-1] if series else {}
-        return (
-            f"Visualization: map_temporal\n"
-            f"Layer: {layer_label or 'unknown'}\n"
-            f"Features count: {data.get('features_count', 'N/A')}\n"
-            f"First temporal value: {first_val}\n"
-            f"Last temporal value: {last_val}\n"
-            f"Unit: {unit}"
-        )
-
-    def _generic_block(self, data: Dict[str, Any]) -> str:
-        records = data.get("records", data.get("data", []))
-        sample = records[:5] if isinstance(records, list) else records
-        return f"Visualization: generic\nSample records (up to 5): {sample}"
 
     def _error_block(self, error: Optional[str]) -> str:
         topics = ", ".join(self.available_topics[:10]) if self.available_topics else "various government data"
