@@ -15,8 +15,8 @@ Full-scope originals archived in [`full-scope/`](full-scope/).
 ## 1. Overview & Design Principles
 
 This Python project is the **LLM + tool-call layer** of the taxi spatial Q&A system. It receives
-natural-language questions, uses a LangChain agent (GPT-4o-mini) to select and invoke the right
-spatial query tool via the Java REST API, and returns a natural-language answer.
+natural-language questions, uses a LangChain **ReAct agent** (GPT-4o-mini) to reason through
+the Java service's OpenAPI spec, discover the right endpoint, call it, and return a natural-language answer.
 
 **Data ingestion and all spatial SQL** are handled by the **Java service**, which also exposes a
 REST API. This Python app never connects to the database — tools call the Java REST endpoints.
@@ -28,8 +28,8 @@ REST API. This Python app never connects to the database — tools call the Java
   analysis.
 - **The LLM NEVER generates SQL.** It selects a tool and provides parameters; the tool calls the
   Java spatial REST API which executes the parameterised PostGIS query.
-- **MVP scope:** LLM agent + 3 spatial tools, hardcoded location gazetteer, single Docker service,
-  3 query types, 3 API endpoints.
+- **MVP scope:** ReAct agent + OpenAPI-driven endpoint discovery, landmark coordinates embedded
+  in system prompt, single Docker service, 3 query types, 3 API endpoints.
 
 ---
 
@@ -76,8 +76,9 @@ All other query types (QT-04 through QT-10) are deferred to the [Post-MVP Roadma
 
 ## 5. Location Resolution
 
-Landmarks are resolved from a hardcoded Python dictionary before the tool makes its REST call.
-For regions (QT-03), the region name string is passed directly to the Java service.
+Landmark coordinates are embedded directly in the agent's system prompt (see §6.3). The ReAct
+agent reads them from context and passes `lat`/`lng` when calling the Java REST endpoint.
+No Python resolver function is invoked.
 
 ```python
 LANDMARK_COORDS: dict[str, tuple[float, float]] = {
@@ -101,8 +102,6 @@ LANDMARK_COORDS: dict[str, tuple[float, float]] = {
 }
 ```
 
-For regions (QT-03), the region name is passed as-is to the Java REST endpoint.
-
 **Supported planning areas (QT-03):** Tampines, Jurong West, Bedok, Woodlands, Hougang, Sengkang,
 Ang Mo Kio, Toa Payoh, Downtown Core, Orchard, Marina South, Queenstown, Clementi, Yishun, Geylang.
 
@@ -113,24 +112,24 @@ Ang Mo Kio, Toa Payoh, Downtown Core, Orchard, Marina South, Queenstown, Clement
 
 ## 6. LLM Agent
 
-This Python project is the **LLM + tool-call layer only**. The agent receives a user question,
-selects the appropriate spatial tool, executes it against PostGIS, and returns a natural-language
-answer.
+This Python project is the **LLM + tool-call layer only**. A ReAct agent receives a user
+question, reasons step by step (Thought → Action → Observation), discovers the correct Java REST
+endpoint from the OpenAPI spec, calls it, and returns a natural-language answer.
 
 ### 6.1 Architecture Flow
 
 ```
 User question
       ↓
-LLM Agent (GPT-4o-mini)        ← decides which tool to call
+ReAct Agent (GPT-4o-mini)      ← reasons step-by-step: Thought → Action → Observation
       ↓
-Tool called with parameters
+OpenAPI Toolkit                ← loads Java service's /v3/api-docs at startup
+   ↙                 ↘
+json_spec_tool    requests_get  ← explore spec / execute HTTP GET calls
       ↓
-Java Spatial REST API          ← HTTP call (httpx); no SQL in Python
+Java Spatial REST API          ← no SQL in Python; PostGIS owned by Java service
       ↓
-PostGIS (parameterised SQL)    ← owned entirely by Java service
-      ↓
-JSON result returned to tool
+JSON result observed by agent
       ↓
 LLM composes natural-language answer
 ```
@@ -138,22 +137,31 @@ LLM composes natural-language answer
 ### 6.2 Agent Setup
 
 ```python
+import os
+import httpx
 from langchain_openai import ChatOpenAI
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain.agents import create_tool_calling_agent, AgentExecutor
+from langchain_community.agent_toolkits.openapi.spec import reduce_openapi_spec
+from langchain_community.agent_toolkits.openapi import create_openapi_agent
+from langchain_community.agent_toolkits import OpenAPIToolkit
+from langchain_community.utilities.requests import TextRequestsWrapper
+
+JAVA_API_BASE = os.environ["JAVA_SPATIAL_API_URL"]  # e.g. http://java-service:8080
+
+# Load and reduce the OpenAPI spec from the Java service at application startup
+raw_spec = httpx.get(f"{JAVA_API_BASE}/v3/api-docs").json()
+api_spec = reduce_openapi_spec(raw_spec)
 
 llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+requests_wrapper = TextRequestsWrapper(headers={"Accept": "application/json"})
+toolkit = OpenAPIToolkit.from_llm(llm, api_spec, requests_wrapper, verbose=False)
 
-tools = [count_taxis_in_radius, find_nearest_taxis, count_taxis_in_region]
-
-prompt = ChatPromptTemplate.from_messages([
-    ("system", SYSTEM_PROMPT),
-    ("human", "{input}"),
-    MessagesPlaceholder(variable_name="agent_scratchpad"),
-])
-
-agent = create_tool_calling_agent(llm, tools, prompt)
-agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=False)
+agent_executor = create_openapi_agent(
+    llm=llm,
+    toolkit=toolkit,
+    prefix=SYSTEM_PROMPT,   # see §6.3
+    verbose=False,
+    max_iterations=5,
+)
 
 # Usage:
 result = await agent_executor.ainvoke({"input": user_query})
@@ -162,30 +170,47 @@ answer = result["output"]
 
 ### 6.3 System Prompt
 
+Passed as `prefix` to `create_openapi_agent`. Landmark coordinates are embedded here so the
+ReAct agent can supply `lat`/`lng` directly when constructing endpoint URLs.
+
 ```python
 SYSTEM_PROMPT = """You are a helpful assistant for querying real-time Singapore taxi distribution data.
+Use the OpenAPI tools to inspect the Java service spec, then call the correct endpoint.
 
 DATA SOURCE:
-- Taxi positions are ingested from data.gov.sg every 30 seconds by a separate Java service.
+- Taxi positions are ingested from data.gov.sg every 30 seconds by the Java service.
 - Available data: anonymous (latitude, longitude) per available taxi, per snapshot.
 - NO taxi IDs, NO speed, NO heading. All taxis in the data are available (not occupied).
 
-YOU HAVE THREE TOOLS — always call a tool before answering a count or location question:
-- count_taxis_in_radius: count taxis within N km of a named landmark or coordinate
-- find_nearest_taxis: find the K nearest taxis to a coordinate
-- count_taxis_in_region: count taxis in a named Singapore URA planning area
+THE API EXPOSES THREE SPATIAL ENDPOINTS — inspect the spec to find exact paths and parameters:
+- radius count  : count taxis within N km of a (lat, lng) coordinate
+- nearest-K     : find the K nearest taxis to a (lat, lng) coordinate
+- region count  : count taxis in a named Singapore URA planning area
 
-LANDMARKS you can use with count_taxis_in_radius:
-Changi Airport, Jewel Changi, Marina Bay Sands, Sentosa, Raffles Place, HarbourFront,
-Woodlands Checkpoint, Tuas Checkpoint, NUS, NTU, Gardens by the Bay, Singapore Zoo,
-VivoCity, ION Orchard, Bugis Junction, Orchard Road.
+LANDMARK COORDINATES — pass these directly when calling coordinate-based endpoints:
+  Changi Airport        lat=1.3644  lng=103.9893
+  Jewel Changi          lat=1.3601  lng=103.9894
+  Marina Bay Sands      lat=1.2838  lng=103.8607
+  Sentosa               lat=1.2494  lng=103.8303
+  Raffles Place         lat=1.2843  lng=103.8514
+  HarbourFront          lat=1.2647  lng=103.8199
+  Woodlands Checkpoint  lat=1.4473  lng=103.7691
+  Tuas Checkpoint       lat=1.3458  lng=103.6367
+  NUS                   lat=1.2966  lng=103.7764
+  NTU                   lat=1.3483  lng=103.6831
+  Gardens by the Bay    lat=1.2816  lng=103.8636
+  Singapore Zoo         lat=1.4043  lng=103.7930
+  VivoCity              lat=1.2643  lng=103.8200
+  ION Orchard           lat=1.3040  lng=103.8318
+  Bugis Junction        lat=1.2993  lng=103.8554
+  Orchard Road          lat=1.3048  lng=103.8318
 
-PLANNING AREAS you can use with count_taxis_in_region:
-Tampines, Jurong West, Bedok, Woodlands, Hougang, Sengkang, Ang Mo Kio, Toa Payoh,
-Downtown Core, Orchard, Marina South, Queenstown, Clementi, Yishun, Geylang.
+PLANNING AREAS for region count:
+  Tampines, Jurong West, Bedok, Woodlands, Hougang, Sengkang, Ang Mo Kio, Toa Payoh,
+  Downtown Core, Orchard, Marina South, Queenstown, Clementi, Yishun, Geylang.
 
-UNSUPPORTED — respond without calling a tool and explain why:
-- Tracking a specific taxi, speed/heading queries, ETA, trajectory, or demand inference.
+UNSUPPORTED — respond without calling any tool and explain why:
+  Tracking a specific taxi, speed/heading queries, ETA, trajectory, or demand inference.
 """
 ```
 
@@ -193,88 +218,45 @@ UNSUPPORTED — respond without calling a tool and explain why:
 
 ## 7. Tools (Geo Query Layer)
 
-Each tool is a LangChain `@tool` with a typed Pydantic input schema. Tools call the
-**Java spatial REST API** via `httpx`. **This Python service never connects to the database
-directly** — all SQL and PostGIS logic lives in the Java service.
+Tools are **not written by hand** in this Python service. An `OpenAPIToolkit` loads the Java
+service's OpenAPI spec at startup and hands the ReAct agent two runtime tools. The agent
+discovers and calls the correct endpoint autonomously — no hardcoded paths, no Pydantic
+schemas, no `@tool` functions.
 
-```python
-import httpx
-import os
+| Runtime tool | What the agent uses it for |
+| ------------ | -------------------------- |
+| `json_spec_tool` | Read the spec to discover endpoint paths, HTTP methods, parameter names, and response schemas |
+| `requests_get` | Make HTTP GET calls to the discovered endpoints with resolved parameters |
 
-JAVA_API_BASE = os.environ["JAVA_SPATIAL_API_URL"]  # e.g. http://java-service:8080
+### 7.1 Java Service OpenAPI Spec
+
+The Java service exposes its spec at `GET /v3/api-docs`. The three MVP endpoints the agent
+discovers and calls at runtime:
+
+| Endpoint | Query params | Response field |
+| -------- | ------------ | -------------- |
+| `GET /api/spatial/radius-count` | `lat` (float), `lng` (float), `radius_km` (float) | `taxi_count` (int) |
+| `GET /api/spatial/nearest` | `lat` (float), `lng` (float), `k` (int) | `taxis` (array of `{lat, lng, distance_m}`) |
+| `GET /api/spatial/region-count` | `region` (string) | `taxi_count` (int) |
+
+### 7.2 Example ReAct Trace (QT-01)
+
 ```
+User: "How many taxis are within 3 km of Changi Airport?"
 
-### 7.1 `count_taxis_in_radius` (QT-01)
+Thought: I need a radius count. Let me check the spec for the right endpoint.
+Action: json_spec_tool
+Action Input: {"query": "radius count"}
+Observation: GET /api/spatial/radius-count — params: lat (float), lng (float), radius_km (float)
+             Returns: {"taxi_count": integer, "snapshot_time": string}
 
-```python
-from pydantic import BaseModel, Field
-from langchain_core.tools import tool
+Thought: Changi Airport is at lat=1.3644, lng=103.9893 per the system context.
+Action: requests_get
+Action Input: {"url": "http://java-service:8080/api/spatial/radius-count?lat=1.3644&lng=103.9893&radius_km=3"}
+Observation: {"taxi_count": 142, "snapshot_time": "2026-02-28T06:30:00Z"}
 
-class RadiusCountInput(BaseModel):
-    landmark_or_location: str = Field(
-        description="Landmark name (e.g. 'Changi Airport') or 'lat,lng' coordinate string"
-    )
-    radius_km: float = Field(description="Search radius in kilometres")
-
-@tool("count_taxis_in_radius", args_schema=RadiusCountInput)
-async def count_taxis_in_radius(landmark_or_location: str, radius_km: float) -> str:
-    """Count available taxis within radius_km of a landmark or coordinate (QT-01)."""
-    lat, lng = resolve_location(landmark_or_location)  # looks up LANDMARK_COORDS dict
-    async with httpx.AsyncClient() as client:
-        resp = await client.get(
-            f"{JAVA_API_BASE}/api/spatial/radius-count",
-            params={"lat": lat, "lng": lng, "radius_km": radius_km},
-        )
-        resp.raise_for_status()
-        count = resp.json()["taxi_count"]
-    return f"{count} taxis within {radius_km} km of {landmark_or_location}."
-```
-
-### 7.2 `find_nearest_taxis` (QT-02)
-
-```python
-class NearestKInput(BaseModel):
-    latitude: float = Field(description="Latitude of the reference point")
-    longitude: float = Field(description="Longitude of the reference point")
-    k: int = Field(default=5, description="Number of nearest taxis to return (default 5)")
-
-@tool("find_nearest_taxis", args_schema=NearestKInput)
-async def find_nearest_taxis(latitude: float, longitude: float, k: int = 5) -> str:
-    """Find the K nearest available taxis to a coordinate (QT-02)."""
-    async with httpx.AsyncClient() as client:
-        resp = await client.get(
-            f"{JAVA_API_BASE}/api/spatial/nearest",
-            params={"lat": latitude, "lng": longitude, "k": k},
-        )
-        resp.raise_for_status()
-        taxis = resp.json()["taxis"]  # [{"lat": ..., "lng": ..., "distance_m": ...}, ...]
-    results = [
-        f"({t['lat']:.4f}, {t['lng']:.4f}) — {t['distance_m']:.0f} m" for t in taxis
-    ]
-    return f"Nearest {k} taxis:\n" + "\n".join(results)
-```
-
-### 7.3 `count_taxis_in_region` (QT-03)
-
-```python
-class RegionCountInput(BaseModel):
-    region_name: str = Field(
-        description="Name of a Singapore URA planning area, e.g. 'Tampines', 'Downtown Core'"
-    )
-
-@tool("count_taxis_in_region", args_schema=RegionCountInput)
-async def count_taxis_in_region(region_name: str) -> str:
-    """Count available taxis in a named Singapore planning region (QT-03)."""
-    async with httpx.AsyncClient() as client:
-        resp = await client.get(
-            f"{JAVA_API_BASE}/api/spatial/region-count",
-            params={"region": region_name},
-        )
-        if resp.status_code == 404:
-            return f"Region '{region_name}' not found."
-        resp.raise_for_status()
-        count = resp.json()["taxi_count"]
-    return f"{count} taxis currently in {region_name}."
+Thought: I have the answer.
+Final Answer: There are 142 available taxis within 3 km of Changi Airport as of 06:30 UTC.
 ```
 
 ---
