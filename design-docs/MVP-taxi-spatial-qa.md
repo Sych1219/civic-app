@@ -76,37 +76,56 @@ All other query types (QT-04 through QT-10) are deferred to the [Post-MVP Roadma
 
 ## 5. Location Resolution
 
-Landmark coordinates are embedded directly in the agent's system prompt (see §6.3). The ReAct
-agent reads them from context and passes `lat`/`lng` when calling the Java REST endpoint.
-No Python resolver function is invoked.
+Place names are resolved to `(lat, lng)` coordinates by a **geocoding tool** that the ReAct
+agent calls before invoking any spatial endpoint. The hardcoded `LANDMARK_COORDS` dict is removed.
+
+### Option A — Built-in LangChain: `GooglePlacesTool` *(requires Google API key)*
+
+`langchain_community.tools.GooglePlacesTool` wraps the Google Places API. No custom code needed;
+just add the tool to the agent's tool list.
 
 ```python
-LANDMARK_COORDS: dict[str, tuple[float, float]] = {
-    # name: (lat, lng)
-    "Changi Airport":       (1.3644, 103.9893),
-    "Jewel Changi":         (1.3601, 103.9894),
-    "Marina Bay Sands":     (1.2838, 103.8607),
-    "Sentosa":              (1.2494, 103.8303),
-    "Raffles Place":        (1.2843, 103.8514),
-    "HarbourFront":         (1.2647, 103.8199),
-    "Woodlands Checkpoint": (1.4473, 103.7691),
-    "Tuas Checkpoint":      (1.3458, 103.6367),
-    "NUS":                  (1.2966, 103.7764),
-    "NTU":                  (1.3483, 103.6831),
-    "Gardens by the Bay":   (1.2816, 103.8636),
-    "Singapore Zoo":        (1.4043, 103.7930),
-    "VivoCity":             (1.2643, 103.8200),
-    "ION Orchard":          (1.3040, 103.8318),
-    "Bugis Junction":       (1.2993, 103.8554),
-    "Orchard Road":         (1.3048, 103.8318),
-}
+# pip install langchain-community googlemaps
+from langchain_community.tools import GooglePlacesTool
+
+geocode_tool = GooglePlacesTool()  # reads GPLACES_API_KEY from env
+# Returns: place name, address, lat/lng, and other metadata as a string
 ```
+
+**Env var required:** `GPLACES_API_KEY`
+
+### Option B — OneMap Singapore API *(recommended, free, Singapore-specific)*
+
+[OneMap](https://www.onemap.gov.sg/apidocs/) is the Singapore government’s authoritative
+geocoding service. Better accuracy for local names and no billing. Wrapped as a LangChain `@tool`:
+
+```python
+import httpx
+from langchain_core.tools import tool
+
+@tool
+async def geocode_place(place_name: str) -> str:
+    """Resolve a Singapore place name or address to latitude and longitude."""
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(
+            "https://www.onemap.gov.sg/api/common/elastic/search",
+            params={"searchVal": place_name, "returnGeom": "Y",
+                    "getAddrDetails": "N", "pageNum": 1},
+        )
+        resp.raise_for_status()
+        results = resp.json().get("results", [])
+    if not results:
+        return f"Could not geocode '{place_name}'."
+    r = results[0]
+    return f"{place_name}: lat={r['LATITUDE']}, lng={r['LONGITUDE']}"
+```
+
+**No API key required** for the search endpoint. **Option B is used in this MVP.**
 
 **Supported planning areas (QT-03):** Tampines, Jurong West, Bedok, Woodlands, Hougang, Sengkang,
 Ang Mo Kio, Toa Payoh, Downtown Core, Orchard, Marina South, Queenstown, Clementi, Yishun, Geylang.
 
-**Removed from MVP:** `pg_trgm` extension, GIN text-search index, OneMap API fallback,
-6-step resolution pipeline.
+**Removed from MVP:** `pg_trgm` extension, GIN text-search index, 6-step resolution pipeline.
 
 ---
 
@@ -155,12 +174,16 @@ llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
 requests_wrapper = TextRequestsWrapper(headers={"Accept": "application/json"})
 toolkit = OpenAPIToolkit.from_llm(llm, api_spec, requests_wrapper, verbose=False)
 
+# Add the OneMap geocoding tool alongside the OpenAPI toolkit tools
+extra_tools = [geocode_place]  # defined in §5 / §7.1
+
 agent_executor = create_openapi_agent(
     llm=llm,
     toolkit=toolkit,
+    extra_tools=extra_tools,
     prefix=SYSTEM_PROMPT,   # see §6.3
     verbose=False,
-    max_iterations=5,
+    max_iterations=6,       # +1 to allow a geocoding step
 )
 
 # Usage:
@@ -170,12 +193,12 @@ answer = result["output"]
 
 ### 6.3 System Prompt
 
-Passed as `prefix` to `create_openapi_agent`. Landmark coordinates are embedded here so the
-ReAct agent can supply `lat`/`lng` directly when constructing endpoint URLs.
+Passed as `prefix` to `create_openapi_agent`.
 
 ```python
 SYSTEM_PROMPT = """You are a helpful assistant for querying real-time Singapore taxi distribution data.
-Use the OpenAPI tools to inspect the Java service spec, then call the correct endpoint.
+Use the tools available to you: first geocode any place name, then inspect the OpenAPI spec to find
+the correct Java spatial endpoint, then call it.
 
 DATA SOURCE:
 - Taxi positions are ingested from data.gov.sg every 30 seconds by the Java service.
@@ -187,25 +210,12 @@ THE API EXPOSES THREE SPATIAL ENDPOINTS — inspect the spec to find exact paths
 - nearest-K     : find the K nearest taxis to a (lat, lng) coordinate
 - region count  : count taxis in a named Singapore URA planning area
 
-LANDMARK COORDINATES — pass these directly when calling coordinate-based endpoints:
-  Changi Airport        lat=1.3644  lng=103.9893
-  Jewel Changi          lat=1.3601  lng=103.9894
-  Marina Bay Sands      lat=1.2838  lng=103.8607
-  Sentosa               lat=1.2494  lng=103.8303
-  Raffles Place         lat=1.2843  lng=103.8514
-  HarbourFront          lat=1.2647  lng=103.8199
-  Woodlands Checkpoint  lat=1.4473  lng=103.7691
-  Tuas Checkpoint       lat=1.3458  lng=103.6367
-  NUS                   lat=1.2966  lng=103.7764
-  NTU                   lat=1.3483  lng=103.6831
-  Gardens by the Bay    lat=1.2816  lng=103.8636
-  Singapore Zoo         lat=1.4043  lng=103.7930
-  VivoCity              lat=1.2643  lng=103.8200
-  ION Orchard           lat=1.3040  lng=103.8318
-  Bugis Junction        lat=1.2993  lng=103.8554
-  Orchard Road          lat=1.3048  lng=103.8318
+STEP ORDER for place-name queries:
+  1. Call geocode_place to resolve the place name to lat/lng.
+  2. Call json_spec_tool to find the correct endpoint.
+  3. Call requests_get with the resolved coordinates.
 
-PLANNING AREAS for region count:
+PLANNING AREAS for region count (pass the name directly, no geocoding needed):
   Tampines, Jurong West, Bedok, Woodlands, Hougang, Sengkang, Ang Mo Kio, Toa Payoh,
   Downtown Core, Orchard, Marina South, Queenstown, Clementi, Yishun, Geylang.
 
@@ -218,15 +228,13 @@ UNSUPPORTED — respond without calling any tool and explain why:
 
 ## 7. Tools (Geo Query Layer)
 
-Tools are **not written by hand** in this Python service. An `OpenAPIToolkit` loads the Java
-service's OpenAPI spec at startup and hands the ReAct agent two runtime tools. The agent
-discovers and calls the correct endpoint autonomously — no hardcoded paths, no Pydantic
-schemas, no `@tool` functions.
+The agent has **three runtime tools** — one custom geocoding tool plus two from the OpenAPI toolkit:
 
-| Runtime tool | What the agent uses it for |
-| ------------ | -------------------------- |
-| `json_spec_tool` | Read the spec to discover endpoint paths, HTTP methods, parameter names, and response schemas |
-| `requests_get` | Make HTTP GET calls to the discovered endpoints with resolved parameters |
+| Tool | Source | What the agent uses it for |
+| ---- | ------ | -------------------------- |
+| `geocode_place` | Custom `@tool` (OneMap API, §5) | Resolve any Singapore place name or address to `lat`/`lng` |
+| `json_spec_tool` | `OpenAPIToolkit` | Read the Java service spec to discover endpoint paths, parameters, and response schemas |
+| `requests_get` | `OpenAPIToolkit` | Make HTTP GET calls to the discovered Java spatial endpoints |
 
 ### 7.1 Java Service OpenAPI Spec
 
@@ -239,18 +247,23 @@ discovers and calls at runtime:
 | `GET /api/spatial/nearest` | `lat` (float), `lng` (float), `k` (int) | `taxis` (array of `{lat, lng, distance_m}`) |
 | `GET /api/spatial/region-count` | `region` (string) | `taxi_count` (int) |
 
-### 7.2 Example ReAct Trace (QT-01)
+### 7.2 Example ReAct Trace (QT-01 with geocoding)
 
 ```
 User: "How many taxis are within 3 km of Changi Airport?"
 
-Thought: I need a radius count. Let me check the spec for the right endpoint.
+Thought: I need to resolve 'Changi Airport' to coordinates first.
+Action: geocode_place
+Action Input: "Changi Airport Singapore"
+Observation: Changi Airport: lat=1.3644, lng=103.9893
+
+Thought: Now find the radius-count endpoint in the spec.
 Action: json_spec_tool
 Action Input: {"query": "radius count"}
 Observation: GET /api/spatial/radius-count — params: lat (float), lng (float), radius_km (float)
              Returns: {"taxi_count": integer, "snapshot_time": string}
 
-Thought: Changi Airport is at lat=1.3644, lng=103.9893 per the system context.
+Thought: Call the endpoint with the resolved coordinates.
 Action: requests_get
 Action Input: {"url": "http://java-service:8080/api/spatial/radius-count?lat=1.3644&lng=103.9893&radius_km=3"}
 Observation: {"taxi_count": 142, "snapshot_time": "2026-02-28T06:30:00Z"}
