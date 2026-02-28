@@ -14,7 +14,7 @@
 
 ## 1. Executive Summary
 
-The Taxi Spatial Distribution Q&A System is a production-grade platform that ingests real-time taxi coordinate snapshots published by the Singapore Land Transport Authority (LTA DataMall) every 30 seconds, stores them in a spatially-indexed PostgreSQL + PostGIS database, and exposes a natural-language Q&A interface powered by LLM intent parsing layered on top of deterministic spatial SQL execution.
+The Taxi Spatial Distribution Q&A System is a production-grade platform that ingests real-time taxi coordinate snapshots published by the Singapore government open-data portal (data.gov.sg) every 30 seconds, stores them in a spatially-indexed PostgreSQL + PostGIS database, and exposes a natural-language Q&A interface powered by LLM intent parsing layered on top of deterministic spatial SQL execution.
 
 **Key design principle:** The raw data contains **anonymous coordinate-timestamp tuples only** — no taxi IDs, no status, no speed, no heading. The system therefore provides **spatial distribution analytics**, not individual vehicle tracking.
 
@@ -48,9 +48,9 @@ Currently, answering such questions requires manual GIS work or custom scripts. 
 
 ### 4.1 Data Source
 
-**LTA DataMall — Taxi Availability API**
+**data.gov.sg — Taxi Availability API**
 
-- Endpoint: `https://datamall2.mytransport.sg/ltaodataservice/Taxi-Availability`
+- Endpoint: `https://api.data.gov.sg/v1/transport/taxi-availability`
 - Update frequency: **every 30 seconds**
 - Returns a JSON array of `{ latitude, longitude }` for every available taxi.
 

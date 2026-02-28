@@ -1302,7 +1302,7 @@ services:
 | LLM prompt injection   | System prompt is fixed; user input is isolated in `{user_query}` slot |
 | API abuse              | Rate limiting (Redis), API key authentication                       |
 | Data privacy           | No PII in taxi data (anonymous coordinates)                         |
-| LTA API key protection | Stored in environment variable / secrets manager; never logged       |
+| data.gov.sg API (no key required) | Open endpoint; no credentials needed. Validate response schema to detect upstream changes. |
 | Database access        | Network-restricted; application connects via PgBouncer only         |
 | HTTPS                  | TLS termination at load balancer                                    |
 
@@ -1437,7 +1437,7 @@ civic-app/
 │   ├── ingestion/
 │   │   ├── __init__.py
 │   │   ├── worker.py                # Polling loop
-│   │   ├── lta_client.py            # LTA API client
+│   │   ├── datagov_client.py        # data.gov.sg Taxi Availability API client
 │   │   └── bulk_inserter.py         # COPY-based bulk insert
 │   ├── llm/
 │   │   ├── __init__.py
