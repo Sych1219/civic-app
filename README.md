@@ -1,58 +1,48 @@
-## Gov API Registration LangGraph
+# Taxi Spatial Q&A — Singapore MVP
 
-This project turns government API documentation text (pasted from web pages, blogs, or PDFs) into structured registrations for the `POST /api/v1/gov/apis` endpoint using LangGraph and LangSmith.
+A **LLM + tool-call** service that answers natural-language questions about real-time Singapore
+taxi distribution. It receives a user query, uses a LangChain agent (GPT-4o-mini) to select and
+invoke the right spatial query tool against PostGIS, and returns a natural-language answer.
 
-### Setup
+> **This service is the LLM layer only.** Taxi data is ingested from data.gov.sg every 30 seconds
+> by a separate **Java service** that writes to the shared PostGIS database.
 
-1. Create a virtualenv and install dependencies:
-   ```bash
-   python -m venv .venv
-   source .venv/bin/activate
-   pip install -r requirements.txt
-   ```
-2. Export credentials for OpenAI and LangSmith (update values as needed):
-   ```bash
-   export OPENAI_API_KEY=sk-...
-   export LANGCHAIN_TRACING_V2=true
-   export LANGCHAIN_API_KEY=ls-...
-   export LANGCHAIN_PROJECT=civic-app
-   ```
+## What it does
 
-### Usage
+Answers spatial questions about available taxis in Singapore using live LTA data
+updated every 30 seconds. Example queries:
 
-```python
-from app import create_gov_api_graph
+- *"How many taxis are within 3 km of Changi Airport?"*
+- *"Nearest 5 taxis to 1.3521, 103.8198"*
+- *"How many taxis are in Tampines right now?"*
 
-graph = create_gov_api_graph()
-result = graph.invoke(
-    {
-        "source_text": \"\"\"
-        GET https://developer.nrel.gov/api/alt-fuel-stations/v1.json
+See [`design-docs/MVP-taxi-spatial-qa.md`](design-docs/MVP-taxi-spatial-qa.md) for full design details.
 
-        Query parameters:
-          - api_key (required)
-          - state (optional)
-          - limit (optional, default 50)
+## Prerequisites
 
-        Headers:
-          Accept: application/json
-        \"\"\",
-        "auto_register": False,  # review before submitting
-    },
-    config={
-        "run_name": "Gov API Draft",
-        "dry_run": True,
-    },
-)
-print(result["contract"])
+- Docker & Docker Compose
+- OpenAI API key (GPT-4o-mini)
+- Java ingestion service running and connected to the same PostgreSQL instance
+
+## Setup
+
+```bash
+cp .env.example .env
+# Fill in OPENAI_API_KEY, LTA_API_KEY, and DB_PASSWORD in .env
+docker compose up
 ```
 
-Key steps handled by the graph:
+## Usage
 
-1. Normalize the pasted API-related text.
-2. Split content into context chunks.
-3. Prompt GPT-4o via LangChain/LangGraph with guardrails + schema derived from `GovApiContract`.
-4. Validate the JSON payload before optionally submitting it through `GovApiRegistryClient`.
-5. When `auto_register=True`, the payload is POSTed to `http://localhost:8080/api/v1/gov/apis`; otherwise the workflow stops after validation so an operator can review/edit.
+```bash
+curl -X POST http://localhost:8000/api/v1/query \
+  -H "Content-Type: application/json" \
+  -d '{"query": "How many taxis are within 3km of Changi Airport?"}'
+```
 
-LangSmith captures traces for each node (`gov.normalize_text`, `gov.chunk_context`, etc.) to simplify debugging and prompt tuning. Set `config={"dry_run": True}` or `auto_register=False` to avoid calling the registry endpoint while iterating locally.
+Other endpoints:
+
+| Method | Path                      | Description              |
+| ------ | ------------------------- | ------------------------ |
+| GET    | `/api/v1/snapshot/latest` | Latest snapshot metadata |
+| GET    | `/api/v1/health`          | Health check             |
