@@ -1,6 +1,6 @@
 # Core Framework
 fastapi
-uvicorn
+uvicorn[standard]
 pydantic
 
 # LLM & AI
@@ -14,13 +14,6 @@ langsmith
 # HTTP & API
 httpx
 
-# Data Processing
-pandas
-numpy
-
-# Semantic Search
-scikit-learn
-
 # Utilities
 python-dotenv
-jmespath
+PyYAML
