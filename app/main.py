@@ -63,28 +63,32 @@ async def query(request: QueryRequest):
 
     t0 = time.monotonic()
     try:
-        result = await agent.ainvoke({"input": request.query})
+        # LangGraph agents use message-based I/O
+        result = await agent.ainvoke({"messages": [("human", request.query)]})
     except Exception as exc:
         logger.error("Agent invocation failed: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc))
 
     elapsed_ms = int((time.monotonic() - t0) * 1000)
 
-    answer: str = result.get("output", "")
+    # Extract final answer from the last AI message
+    messages = result.get("messages", [])
+    answer = ""
+    for msg in reversed(messages):
+        if getattr(msg, "type", None) == "ai" and msg.content:
+            answer = msg.content if isinstance(msg.content, str) else str(msg.content)
+            break
 
-    # Extract the last tool observation as raw data (best-effort)
+    # Extract raw data from the last tool message (best-effort)
+    import json
     raw_data: Dict[str, Any] | None = None
-    intermediate_steps = result.get("intermediate_steps", [])
-    if intermediate_steps:
-        last_observation = intermediate_steps[-1][1]
-        if isinstance(last_observation, dict):
-            raw_data = last_observation
-        elif isinstance(last_observation, str):
-            import json
+    for msg in reversed(messages):
+        if getattr(msg, "type", None) == "tool":
             try:
-                raw_data = json.loads(last_observation)
-            except (json.JSONDecodeError, ValueError):
+                raw_data = json.loads(msg.content)
+            except (json.JSONDecodeError, ValueError, TypeError):
                 pass
+            break
 
     return QueryResponse(
         answer=answer,
