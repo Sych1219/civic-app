@@ -28,8 +28,7 @@ REST API. This Python app never connects to the database — tools call the Java
   analysis.
 - **The LLM NEVER generates SQL.** It selects a tool and provides parameters; the tool calls the
   Java spatial REST API which executes the parameterised PostGIS query.
-- **MVP scope:** ReAct agent + OpenAPI-driven endpoint discovery, landmark coordinates embedded
-  in system prompt, single Docker service, 3 query types, 3 API endpoints.
+- **MVP scope:** ReAct agent + OpenAPI-driven endpoint discovery, OneMap geocoding, single Docker service, 9 query types, 9 API endpoints.
 
 ---
 
@@ -148,7 +147,7 @@ User question
       ↓
 ReAct Agent (GPT-4o-mini)      ← reasons step-by-step: Thought → Action → Observation
       ↓
-OpenAPI Toolkit                ← loads Java service's /v3/api-docs at startup
+OpenAPI Toolkit                ← loads Java service's /api-docs at startup
    ↙                 ↘
 json_spec_tool    requests_get  ← explore spec / execute HTTP GET calls
       ↓
@@ -170,10 +169,10 @@ from langchain_community.agent_toolkits.openapi import create_openapi_agent
 from langchain_community.agent_toolkits import OpenAPIToolkit
 from langchain_community.utilities.requests import TextRequestsWrapper
 
-JAVA_API_BASE = os.environ["JAVA_SPATIAL_API_URL"]  # e.g. http://java-service:8080
+JAVA_API_BASE = os.environ["JAVA_SPATIAL_API_URL"]  # e.g. http://localhost:8080
 
 # Load and reduce the OpenAPI spec from the Java service at application startup
-raw_spec = httpx.get(f"{JAVA_API_BASE}/v3/api-docs").json()
+raw_spec = httpx.get(f"{JAVA_API_BASE}/api-docs").json()
 api_spec = reduce_openapi_spec(raw_spec)
 
 llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
@@ -240,17 +239,19 @@ UNSUPPORTED — respond without calling any tool and explain why:
 
 ## 7. Tools (Geo Query Layer)
 
-The agent has **three runtime tools** — one custom geocoding tool plus two from the OpenAPI toolkit:
+The agent has **two tool sources**: one custom geocoding tool, and `OpenAPIToolkit` which exposes
+three individual callable tools to the agent at runtime:
 
 | Tool | Source | What the agent uses it for |
 | ---- | ------ | -------------------------- |
 | `geocode_place` | Custom `@tool` (OneMap API, §5) | Resolve any Singapore place name or address to `lat`/`lng` |
-| `json_spec_tool` | `OpenAPIToolkit` | Read the Java service spec to discover endpoint paths, parameters, and response schemas |
-| `requests_get` | `OpenAPIToolkit` | Make HTTP GET calls to the discovered Java spatial endpoints |
+| `json_spec_tool` | `OpenAPIToolkit` (generated) | Read the Java service spec to discover endpoint paths, parameters, and response schemas |
+| `requests_get` | `OpenAPIToolkit` (generated) | Make HTTP GET calls to Java spatial endpoints (radius, nearest, zone, road, history) |
+| `requests_post` | `OpenAPIToolkit` (generated) | Make HTTP POST calls to Java spatial endpoints (polygon/count, route/count) |
 
 ### 7.1 Java Service OpenAPI Spec
 
-The Java service exposes its spec at `GET /v3/api-docs`. MVP endpoints under `/api/v1/taxis`:
+The Java service exposes its spec at `GET /api-docs` (Swagger UI at `/swagger-ui.html`). MVP endpoints under `/api/v1/taxis`:
 
 | Endpoint | Key params | Response |
 | -------- | ---------- | -------- |
@@ -274,15 +275,15 @@ Action: geocode_place
 Action Input: "Changi Airport Singapore"
 Observation: Changi Airport: lat=1.3644, lng=103.9893
 
-Thought: Now find the radius-count endpoint in the spec.
+Thought: Now find the nearby/count endpoint in the spec.
 Action: json_spec_tool
-Action Input: {"query": "radius count"}
-Observation: GET /api/spatial/radius-count — params: lat (float), lng (float), radius_km (float)
+Action Input: {"query": "nearby count radius"}
+Observation: GET /api/v1/taxis/nearby/count — params: lat (float), lng (float), radius (int, metres)
              Returns: {"taxi_count": integer, "snapshot_time": string}
 
-Thought: Call the endpoint with the resolved coordinates.
+Thought: Call the endpoint with the resolved coordinates. 3 km = 3000 metres.
 Action: requests_get
-Action Input: {"url": "http://java-service:8080/api/spatial/radius-count?lat=1.3644&lng=103.9893&radius_km=3"}
+Action Input: {"url": "http://localhost:8080/api/v1/taxis/nearby/count?lat=1.3644&lng=103.9893&radius=3000"}
 Observation: {"taxi_count": 142, "snapshot_time": "2026-02-28T06:30:00Z"}
 
 Thought: I have the answer.
