@@ -57,13 +57,19 @@ REST API. This Python app never connects to the database — tools call the Java
 
 ## 3. Supported Query Types (MVP)
 
-| Code  | Query Type   | Example                                          | Output                          |
-| ----- | ------------ | ------------------------------------------------ | ------------------------------- |
-| QT-01 | Radius count | "How many taxis within 3 km of Changi Airport?"  | Integer count                   |
-| QT-02 | Nearest-K    | "Nearest 5 taxis to 1.3521, 103.8198"            | K coordinate pairs + distances  |
-| QT-03 | Region count | "How many taxis are in Tampines?"                | Count for the named region      |
+| Code  | Query Type        | Example                                                          | Endpoint                        | Output                                   |
+| ----- | ----------------- | ---------------------------------------------------------------- | ------------------------------- | ---------------------------------------- |
+| QT-01 | Radius count      | "How many taxis within 3 km of Changi Airport?"                  | GET /nearby/count               | Integer count                            |
+| QT-02 | Nearest-K         | "Nearest 5 taxis to 1.3521, 103.8198"                            | GET /nearest                    | K coordinate pairs + distances (metres)  |
+| QT-03 | Zone count        | "How many taxis are in Tampines?"                                | GET /zone/{zoneName}/count      | Count for the named zone                 |
+| QT-04 | Nearby list       | "List taxis within 500 m of Raffles Place"                       | GET /nearby                     | GeoJSON FeatureCollection (up to limit)  |
+| QT-05 | Polygon count     | "How many taxis are inside this drawn area?"                     | POST /polygon/count             | Integer count inside ad-hoc polygon      |
+| QT-06 | Road buffer count | "How many taxis are along Orchard Road?"                         | GET /road/{roadName}/count      | Integer count within buffer of road      |
+| QT-07 | Route buffer count| "How many taxis are near this route?"                            | POST /route/count               | Integer count within buffer of LineString|
+| QT-08 | Time-window count | "How many taxis were near CBD between 8 pm and 9 pm?"            | GET /history/snapshots          | Per-minute counts over a time range      |
+| QT-09 | Recent delta      | "How has taxi supply in Orchard changed in the last 10 minutes?" | GET /history/recent             | Count delta over the last N minutes      |
 
-All other query types (QT-04 through QT-10) are deferred to the [Post-MVP Roadmap](#11-post-mvp-roadmap).
+All other query types (QT-10 and beyond) are deferred to the [Post-MVP Roadmap](#11-post-mvp-roadmap).
 
 ---
 
@@ -205,10 +211,16 @@ DATA SOURCE:
 - Available data: anonymous (latitude, longitude) per available taxi, per snapshot.
 - NO taxi IDs, NO speed, NO heading. All taxis in the data are available (not occupied).
 
-THE API EXPOSES THREE SPATIAL ENDPOINTS — inspect the spec to find exact paths and parameters:
-- radius count  : count taxis within N km of a (lat, lng) coordinate
-- nearest-K     : find the K nearest taxis to a (lat, lng) coordinate
-- region count  : count taxis in a named Singapore URA planning area
+THE API EXPOSES NINE SPATIAL ENDPOINTS under /api/v1/taxis — inspect the spec for exact paths and params:
+- nearby/count       : count taxis within radius metres of a (lat, lng) point
+- nearby             : list those taxis as GeoJSON (up to limit)
+- nearest            : closest N taxis to a point, each with distance in metres
+- zone/{name}/count  : count taxis inside a named zone (e.g. cbd, tampines)
+- polygon/count      : count taxis inside an ad-hoc GeoJSON Polygon (POST body)
+- road/{name}/count  : count taxis within buffer_m metres of a named road
+- route/count        : count taxis within buffer_m metres of a GeoJSON LineString route (POST body)
+- history/snapshots  : per-minute counts over a start→end time range, optionally by zone
+- history/recent     : delta — count change over the last N minutes, optionally by zone
 
 STEP ORDER for place-name queries:
   1. Call geocode_place to resolve the place name to lat/lng.
@@ -238,14 +250,19 @@ The agent has **three runtime tools** — one custom geocoding tool plus two fro
 
 ### 7.1 Java Service OpenAPI Spec
 
-The Java service exposes its spec at `GET /v3/api-docs`. The three MVP endpoints the agent
-discovers and calls at runtime:
+The Java service exposes its spec at `GET /v3/api-docs`. MVP endpoints under `/api/v1/taxis`:
 
-| Endpoint | Query params | Response field |
-| -------- | ------------ | -------------- |
-| `GET /api/spatial/radius-count` | `lat` (float), `lng` (float), `radius_km` (float) | `taxi_count` (int) |
-| `GET /api/spatial/nearest` | `lat` (float), `lng` (float), `k` (int) | `taxis` (array of `{lat, lng, distance_m}`) |
-| `GET /api/spatial/region-count` | `region` (string) | `taxi_count` (int) |
+| Endpoint | Key params | Response |
+| -------- | ---------- | -------- |
+| `GET /nearby/count` | `lat`, `lng`, `radius` (metres) | `taxi_count` (int) |
+| `GET /nearby` | `lat`, `lng`, `radius`, `limit` | GeoJSON FeatureCollection |
+| `GET /nearest` | `lat`, `lng`, `n` (int) | array of `{lat, lng, distance_m}` |
+| `GET /zone/{zoneName}/count` | path: `zoneName` | `taxi_count` (int) |
+| `POST /polygon/count` | body: GeoJSON Polygon | `taxi_count` (int) |
+| `GET /road/{roadName}/count` | path: `roadName`, `buffer_m` | `taxi_count` (int) |
+| `POST /route/count` | body: GeoJSON LineString, `buffer_m` | `taxi_count` (int) |
+| `GET /history/snapshots` | `start`, `end` (ISO-8601), optional `zone` | array of `{timestamp, count}` |
+| `GET /history/recent` | `minutes` (int), optional `zone` | `delta` (int), `from_count`, `to_count` |
 
 ### 7.2 Example ReAct Trace (QT-01 with geocoding)
 
@@ -353,13 +370,10 @@ POST /api/v1/query
 
 ## 11. Post-MVP Roadmap
 
-- **QT-04** Road buffer count (`sg_road_corridors` table + `ST_DWithin` on linestring)
-- **QT-05** Density ranking (region count / area)
-- **QT-06** Time-window count (count per 30 s snapshot over a range)
-- **QT-07** Trend analysis (linear regression on snapshot counts)
-- **QT-08** Statistical aggregation (`taxi_agg_hourly` materialised view)
-- **QT-09** Snapshot comparison
-- **QT-10** Heatmap data (hex grid or KDE via scipy)
+- **QT-10** Density ranking (zone count / area km²)
+- **QT-11** Statistical aggregation (`taxi_agg_hourly` materialised view — min/max/avg per hour)
+- **QT-12** Trend analysis (linear regression on snapshot counts)
+- **QT-13** Heatmap data (hex grid or KDE via scipy)
 - Table partitioning (daily, via pg_partman)
 - BRIN index + partial index on `captured_at`
 - 3-tier data retention (hot/warm/cold + S3 Parquet)
