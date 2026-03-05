@@ -28,7 +28,7 @@ REST API. This Python app never connects to the database — tools call the Java
   analysis.
 - **The LLM NEVER generates SQL.** It selects a tool and provides parameters; the tool calls the
   Java spatial REST API which executes the parameterised PostGIS query.
-- **MVP scope:** ReAct agent + OpenAPI-driven endpoint discovery, OneMap geocoding, single Docker service, 9 query types, 9 API endpoints.
+- **MVP scope:** ReAct agent + OpenAPI-driven endpoint discovery, OneMap geocoding, single Docker service, 9 query types, 8 API endpoints.
 
 ---
 
@@ -58,10 +58,10 @@ REST API. This Python app never connects to the database — tools call the Java
 
 | Code  | Query Type        | Example                                                          | Endpoint                        | Output                                   |
 | ----- | ----------------- | ---------------------------------------------------------------- | ------------------------------- | ---------------------------------------- |
-| QT-01 | Radius count      | "How many taxis within 3 km of Changi Airport?"                  | GET /nearby/count               | Integer count                            |
+| QT-01 | Radius count      | "How many taxis within 3 km of Changi Airport?"                  | GET /nearby                     | Integer count + GeoJSON FeatureCollection|
 | QT-02 | Nearest-K         | "Nearest 5 taxis to 1.3521, 103.8198"                            | GET /nearest                    | K coordinate pairs + distances (metres)  |
 | QT-03 | Zone count        | "How many taxis are in Tampines?"                                | GET /zone/{zoneName}/count      | Count for the named zone                 |
-| QT-04 | Nearby list       | "List taxis within 500 m of Raffles Place"                       | GET /nearby                     | GeoJSON FeatureCollection (up to limit)  |
+| QT-04 | Nearby list       | "List taxis within 500 m of Raffles Place"                       | GET /nearby                     | Integer count + GeoJSON FeatureCollection|
 | QT-05 | Polygon count     | "How many taxis are inside this drawn area?"                     | POST /polygon/count             | Integer count inside ad-hoc polygon      |
 | QT-06 | Road buffer count | "How many taxis are along Orchard Road?"                         | GET /road/{roadName}/count      | Integer count within buffer of road      |
 | QT-07 | Route buffer count| "How many taxis are near this route?"                            | POST /route/count               | Integer count within buffer of LineString|
@@ -209,8 +209,7 @@ DATA:
 - NO taxi IDs, NO speed, NO heading. All taxis returned are available (not occupied).
 
 ENDPOINTS under /api/v1/taxis — inspect the spec for exact paths and parameter names:
-GET  nearby/count       : count taxis within radius metres of (lat, lng)
-GET  nearby             : list taxis as GeoJSON (up to limit)
+GET  nearby             : count taxis within radius metres of (lat, lng) and list as GeoJSON (up to limit)
 GET  nearest            : closest N taxis to a point, each with distance_m
 GET  zone/{name}/count  : count taxis inside a named planning area
 POST polygon/count      : count taxis inside a GeoJSON Polygon body
@@ -276,8 +275,7 @@ The Java service exposes its spec at `GET /api-docs` (Swagger UI at `/swagger-ui
 
 | Endpoint | Key params | Response |
 | -------- | ---------- | -------- |
-| `GET /nearby/count` | `lat`, `lng`, `radius` (metres) | `taxi_count` (int) |
-| `GET /nearby` | `lat`, `lng`, `radius`, `limit` | GeoJSON FeatureCollection |
+| `GET /nearby` | `lat`, `lng`, `radius` (metres), `limit` | `taxi_count` (int) + GeoJSON FeatureCollection |
 | `GET /nearest` | `lat`, `lng`, `n` (int) | array of `{lat, lng, distance_m}` |
 | `GET /zone/{zoneName}/count` | path: `zoneName` | `taxi_count` (int) |
 | `POST /polygon/count` | body: GeoJSON Polygon | `taxi_count` (int) |
@@ -296,16 +294,16 @@ Action: geocode_place
 Action Input: "Changi Airport Singapore"
 Observation: Changi Airport: lat=1.3644, lng=103.9893
 
-Thought: Now find the nearby/count endpoint in the spec.
+Thought: Now find the nearby endpoint in the spec.
 Action: json_spec_tool
 Action Input: {"query": "nearby count radius"}
-Observation: GET /api/v1/taxis/nearby/count — params: lat (float), lng (float), radius (int, metres)
-             Returns: {"taxi_count": integer, "snapshot_time": string}
+Observation: GET /api/v1/taxis/nearby — params: lat (float), lng (float), radius (int, metres), limit (int, optional)
+             Returns: {"taxi_count": integer, "snapshot_time": string, "locations": GeoJSON FeatureCollection}
 
 Thought: Call the endpoint with the resolved coordinates. 3 km = 3000 metres.
 Action: requests_get
-Action Input: {"url": "http://localhost:8080/api/v1/taxis/nearby/count?lat=1.3644&lng=103.9893&radius=3000"}
-Observation: {"taxi_count": 142, "snapshot_time": "2026-02-28T06:30:00Z"}
+Action Input: {"url": "http://localhost:8080/api/v1/taxis/nearby?lat=1.3644&lng=103.9893&radius=3000"}
+Observation: {"taxi_count": 142, "snapshot_time": "2026-02-28T06:30:00Z", "locations": {...}}
 
 Thought: I have the answer.
 Final Answer: There are 142 available taxis within 3 km of Changi Airport as of 06:30 UTC.
@@ -339,19 +337,18 @@ POST /api/v1/query
     "answer": "There are 142 available taxis within 3 km of Changi Airport as of 2026-02-28T06:30:00Z.",
     "data": {
         "taxi_count": 142,
-        "radius_km": 3.0,
-        "center": { "latitude": 1.3644, "longitude": 103.9893 },
         "snapshot_time": "2026-02-28T06:30:00Z",
-        "batch_id": "a1b2c3d4-..."
-    },
-    "query_plan": {
-        "intent": "radius_count",
-        "confidence": 0.95
+        "locations": {
+            "type": "FeatureCollection",
+            "features": [
+                { "type": "Feature", "geometry": { "type": "Point", "coordinates": [103.992, 1.361] }, "properties": null },
+                { "type": "Feature", "geometry": { "type": "Point", "coordinates": [103.987, 1.365] }, "properties": null }
+            ]
+        }
     },
     "metadata": {
         "execution_time_ms": 87,
-        "llm_latency_ms": 450,
-        "sql_latency_ms": 32
+        "llm_latency_ms": 450
     }
 }
 ```
