@@ -85,7 +85,8 @@ async def query(request: QueryRequest):
     for msg in reversed(messages):
         if getattr(msg, "type", None) == "tool":
             try:
-                raw_data = json.loads(msg.content)
+                parsed = json.loads(msg.content)
+                raw_data = parsed.get("raw_data")
             except (json.JSONDecodeError, ValueError, TypeError):
                 pass
             break

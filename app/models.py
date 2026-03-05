@@ -10,7 +10,6 @@ class QueryRequest(BaseModel):
 class QueryResponse(BaseModel):
     answer: str
     data: Optional[Dict[str, Any]] = None
-    query_plan: Optional[Dict[str, Any]] = None
     metadata: Optional[Dict[str, Any]] = None
 
 

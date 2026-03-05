@@ -1,5 +1,7 @@
+import json
 import os
 import logging
+from typing import Any, Optional
 
 import httpx
 from langchain.agents import create_agent
@@ -13,6 +15,22 @@ from app.tools import geocode_place
 
 logger = logging.getLogger(__name__)
 
+
+class CapturingRequestsWrapper(TextRequestsWrapper):
+    """TextRequestsWrapper that records the last raw HTTP response text."""
+
+    last_raw_response: Optional[str] = None
+
+    def get(self, url: str, **kwargs: Any) -> str:
+        response = super().get(url, **kwargs)
+        self.last_raw_response = response
+        return response
+
+    def post(self, url: str, data: Any, **kwargs: Any) -> str:
+        response = super().post(url, data, **kwargs)
+        self.last_raw_response = response
+        return response
+
 SYSTEM_PROMPT = """You are a helpful assistant for querying real-time Singapore taxi availability data.
 
 DATA:
@@ -21,8 +39,7 @@ DATA:
 - NO taxi IDs, NO speed, NO heading. All taxis returned are available (not occupied).
 
 ENDPOINTS under /api/v1/taxis — inspect the spec for exact paths and parameter names:
-GET  nearby/count       : count taxis within radius metres of (lat, lng)
-GET  nearby             : list taxis as GeoJSON (up to limit)
+GET  nearby             : count taxis within radius metres of (lat, lng) and list as GeoJSON (up to limit)
 GET  nearest            : closest N taxis to a point, each with distance_m
 GET  zone/{name}/count  : count taxis inside a named planning area
 POST polygon/count      : count taxis inside a GeoJSON Polygon body
@@ -75,12 +92,12 @@ def _build_agent(java_api_base: str):
     api_spec = reduce_openapi_spec(raw_spec)
 
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
-    requests_wrapper = TextRequestsWrapper(headers={"Accept": "application/json"})
+    capturing_wrapper = CapturingRequestsWrapper(headers={"Accept": "application/json"})
 
     # Inner: hierarchical planner-controller agent for OpenAPI querying
     openapi_agent = planner.create_openapi_agent(
         api_spec,
-        requests_wrapper,
+        capturing_wrapper,
         llm,
         allow_dangerous_requests=True,
         verbose=True,
@@ -92,8 +109,18 @@ def _build_agent(java_api_base: str):
         planner-controller. The planner decides which endpoints to call; the
         controller executes them. Pass a self-contained question that includes
         any already-resolved coordinates (lat/lng) or named planning areas."""
+        capturing_wrapper.last_raw_response = None
         result = openapi_agent.invoke({"input": question})
-        return result.get("output", str(result))
+        text_answer = result.get("output", str(result))
+
+        raw_data = None
+        if capturing_wrapper.last_raw_response:
+            try:
+                raw_data = json.loads(capturing_wrapper.last_raw_response)
+            except (json.JSONDecodeError, ValueError):
+                pass
+
+        return json.dumps({"answer": text_answer, "raw_data": raw_data})
 
     # Outer: LangGraph agent — geocodes place names, then delegates API calls
     return create_agent(
