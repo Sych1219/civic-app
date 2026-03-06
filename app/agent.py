@@ -71,8 +71,16 @@ STEP ORDER — choose the pattern that fits the question:
     2. requests_get with ISO-8601 start/end or minutes param
 
 PLANNING AREAS for zone queries (pass name as-is, no geocoding needed):
-  Tampines, Jurong West, Bedok, Woodlands, Hougang, Sengkang, Ang Mo Kio, Toa Payoh,
-  Downtown Core, Orchard, Marina South, Queenstown, Clementi, Yishun, Geylang.
+  Ang Mo Kio, Bedok, Bishan, Boon Lay, Bukit Batok, Bukit Merah, Bukit Panjang, Bukit Timah,
+  Central Water Catchment, Changi, Changi Bay, Choa Chu Kang, Clementi, Downtown Core,
+  Geylang, Hougang, Jurong East, Jurong West, Kallang, Lim Chu Kang, Mandai, Marine Parade,
+  Marina East, Marina South, Museum, Newton, North-Eastern Islands, Novena, Orchard, Outram,
+  Pasir Ris, Paya Lebar, Pioneer, Punggol, Queenstown, River Valley, Rochor, Seletar,
+  Sembawang, Sengkang, Serangoon, Simpang, Singapore River, Southern Islands, Straits View,
+  Sungei Kadut, Tampines, Tanglin, Tengah, Toa Payoh, Tuas, Western Islands,
+  Western Water Catchment, Woodlands, Yishun.
+
+If the user names a location not in this list, use geocode_place → nearby endpoint instead of rejecting it.
 
 ANSWERING: Always include the snapshot_time from the API response in your final answer
 (e.g. "as of 14:30 SGT"). If the field is absent, omit it.
