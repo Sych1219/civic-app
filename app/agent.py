@@ -68,7 +68,8 @@ STEP ORDER — choose the pattern that fits the question:
 
   Historical (history/snapshots, history/recent):
     1. Parse time range or N minutes from the question
-    2. requests_get with ISO-8601 start/end or minutes param
+    2. If a location/zone is mentioned, identify the zone name from PLANNING AREAS
+    3. requests_get with ISO-8601 start/end or minutes param, AND include zone=<name> if a zone was identified — do NOT omit the zone param
 
 PLANNING AREAS for zone queries (pass name as-is, no geocoding needed):
   Ang Mo Kio, Bedok, Bishan, Boon Lay, Bukit Batok, Bukit Merah, Bukit Panjang, Bukit Timah,
@@ -118,7 +119,13 @@ def _build_agent(java_api_base: str):
         controller executes them. Pass a self-contained question that includes
         any already-resolved coordinates (lat/lng) or named planning areas."""
         capturing_wrapper.last_raw_response = None
-        result = openapi_agent.invoke({"input": question})
+        enhanced = (
+            "CRITICAL RULE: Every filter condition in the question — zone name, "
+            "time range, radius, location — MUST be included as a query parameter "
+            "in every API call. Do NOT drop any parameter between planning and execution.\n\n"
+            f"Question: {question}"
+        )
+        result = openapi_agent.invoke({"input": enhanced})
         text_answer = result.get("output", str(result))
 
         raw_data = None
