@@ -208,16 +208,6 @@ DATA:
 - Each record is an anonymous (lat, lng) for one available taxi.
 - NO taxi IDs, NO speed, NO heading. All taxis returned are available (not occupied).
 
-ENDPOINTS under /api/v1/taxis — inspect the spec for exact paths and parameter names:
-GET  nearby             : count taxis within radius metres of (lat, lng) and list as GeoJSON (up to limit)
-GET  nearest            : closest N taxis to a point, each with distance_m
-GET  zone/{name}/count  : count taxis inside a named planning area
-POST polygon/count      : count taxis inside a GeoJSON Polygon body
-GET  road/{name}/count  : count taxis within buffer_m metres of a named road
-POST route/count        : count taxis within buffer_m of a GeoJSON LineString body
-GET  history/snapshots  : per-minute counts for start→end (ISO-8601), optional zone
-GET  history/recent     : delta over last N minutes, optional zone
-
 UNITS: Always convert km → metres before calling the API (e.g. 3 km = 3000, 500 m = 500).
 
 STEP ORDER — choose the pattern that fits the question:
@@ -273,16 +263,20 @@ three individual callable tools to the agent at runtime:
 
 The Java service exposes its spec at `GET /api-docs` (Swagger UI at `/swagger-ui.html`). MVP endpoints under `/api/v1/taxis`:
 
-| Endpoint | Key params | Response |
-| -------- | ---------- | -------- |
-| `GET /nearby` | `lat`, `lng`, `radius` (metres), `limit` | `taxi_count` (int) + GeoJSON FeatureCollection |
-| `GET /nearest` | `lat`, `lng`, `n` (int) | array of `{lat, lng, distance_m}` |
-| `GET /zone/{zoneName}/count` | path: `zoneName` | `taxi_count` (int) |
-| `POST /polygon/count` | body: GeoJSON Polygon | `taxi_count` (int) |
-| `GET /road/{roadName}/count` | path: `roadName`, `buffer_m` | `taxi_count` (int) |
-| `POST /route/count` | body: GeoJSON LineString, `buffer_m` | `taxi_count` (int) |
-| `GET /history/snapshots` | `start`, `end` (ISO-8601), optional `zone` | array of `{timestamp, count}` |
-| `GET /history/recent` | `minutes` (int), optional `zone` | `delta` (int), `from_count`, `to_count` |
+All Java service responses share the envelope `{ "success": bool, "data": { ... }, "error": null | {...} }`.
+For spatial queries `data.type = "spatial_query"` and carries a `context` object echoing the query params.
+For history queries `data.type = "timeline"`. The agent must navigate to `data.*` fields, not the envelope root.
+
+| Endpoint | Key params | `data` shape |
+| -------- | ---------- | ------------ |
+| `GET /nearby` | `lat`, `lon`, `radius` (metres), `limit` | `type:"spatial_query"`, `taxi_count`, `snapshot_time`, `context:{type:"radius", lat, lon, radius_m}`, `locations` (GeoJSON FeatureCollection) |
+| `GET /nearest` | `lat`, `lon`, `limit` (int) | `type:"spatial_query"`, `taxi_count`, `snapshot_time`, `context:{type:"nearest", lat, lon, limit}`, `locations` (FeatureCollection; each feature has `properties.distance_m`) |
+| `GET /zone/{zoneName}/count` | path: `zoneName` | `type:"spatial_query"`, `taxi_count`, `snapshot_time`, `context:{type:"zone", zone_name, category}`, `locations` (FeatureCollection) |
+| `POST /polygon/count` | body: GeoJSON Polygon | `type:"spatial_query"`, `taxi_count`, `snapshot_time`, `context:{type:"polygon", polygon}`, `locations` (FeatureCollection) |
+| `GET /road/{roadName}/count` | path: `roadName`, `buffer_m` | `type:"spatial_query"`, `taxi_count`, `snapshot_time`, `context:{type:"road", road_name, category, buffer_m}`, `locations` (FeatureCollection) |
+| `POST /route/count` | body: GeoJSON LineString, `buffer_m` | `type:"spatial_query"`, `taxi_count`, `snapshot_time`, `context:{type:"route", route, buffer_m}`, `locations` (FeatureCollection) |
+| `GET /history/snapshots` | `start`, `end` (ISO-8601), optional `zone` | `type:"timeline"`, `from_time`, `to_time`, `snapshots:[{timestamp, taxi_count, locations (FeatureCollection)}]` |
+| `GET /history/recent` | `minutes` (int), optional `zone` | `type:"timeline"`, `from_time`, `to_time`, `window_minutes`, `snapshots:[{timestamp, taxi_count, locations (FeatureCollection)}]` |
 
 ### 7.2 Example ReAct Trace (QT-01 with geocoding)
 
@@ -297,13 +291,13 @@ Observation: Changi Airport: lat=1.3644, lng=103.9893
 Thought: Now find the nearby endpoint in the spec.
 Action: json_spec_tool
 Action Input: {"query": "nearby count radius"}
-Observation: GET /api/v1/taxis/nearby — params: lat (float), lng (float), radius (int, metres), limit (int, optional)
-             Returns: {"taxi_count": integer, "snapshot_time": string, "locations": GeoJSON FeatureCollection}
+Observation: GET /api/v1/taxis/nearby — params: lat (float), lon (float), radius (int, metres), limit (int, optional)
+             Returns: {"success": true, "data": {"type": "spatial_query", "taxi_count": integer, "snapshot_time": string, "context": {"type": "radius", ...}, "locations": GeoJSON FeatureCollection}, "error": null}
 
-Thought: Call the endpoint with the resolved coordinates. 3 km = 3000 metres.
+Thought: Call the endpoint with the resolved coordinates. 3 km = 3000 metres. Use param name "lon" not "lng".
 Action: requests_get
-Action Input: {"url": "http://localhost:8080/api/v1/taxis/nearby?lat=1.3644&lng=103.9893&radius=3000"}
-Observation: {"taxi_count": 142, "snapshot_time": "2026-02-28T06:30:00Z", "locations": {...}}
+Action Input: {"url": "http://localhost:8080/api/v1/taxis/nearby?lat=1.3644&lon=103.9893&radius=3000"}
+Observation: {"success": true, "data": {"type": "spatial_query", "taxi_count": 142, "snapshot_time": "2026-02-28T06:30:00+08:00", "context": {"type": "radius", "lat": 1.3644, "lon": 103.9893, "radius_m": 3000}, "locations": {...}}, "error": null}
 
 Thought: I have the answer.
 Final Answer: There are 142 available taxis within 3 km of Changi Airport as of 06:30 UTC.
@@ -332,12 +326,17 @@ POST /api/v1/query
 
 **Response:**
 
+The `data` field is passed through from the Java service's `data` object (the `success`/`error` envelope is
+stripped; `data.type` and `data.context` are preserved so the frontend can render accordingly).
+
 ```json
 {
-    "answer": "There are 142 available taxis within 3 km of Changi Airport as of 2026-02-28T06:30:00Z.",
+    "answer": "There are 142 available taxis within 3 km of Changi Airport as of 14:30 SGT.",
     "data": {
+        "type": "spatial_query",
         "taxi_count": 142,
-        "snapshot_time": "2026-02-28T06:30:00Z",
+        "snapshot_time": "2026-02-28T06:30:00+08:00",
+        "context": { "type": "radius", "lat": 1.3644, "lon": 103.9893, "radius_m": 3000 },
         "locations": {
             "type": "FeatureCollection",
             "features": [

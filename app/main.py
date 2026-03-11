@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.agent import get_agent
+from app.agent import get_agent, get_last_raw_data
 from app.models import HealthResponse, QueryRequest, QueryResponse
 
 load_dotenv()
@@ -63,38 +63,21 @@ async def query(request: QueryRequest):
 
     t0 = time.monotonic()
     try:
-        # LangGraph agents use message-based I/O
-        result = await agent.ainvoke({"messages": [("human", request.query)]})
+        result = await agent.ainvoke({"input": request.query})
     except Exception as exc:
         logger.error("Agent invocation failed: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc))
 
     elapsed_ms = int((time.monotonic() - t0) * 1000)
 
-    # Extract final answer from the last AI message
-    messages = result.get("messages", [])
-    answer = ""
-    for msg in reversed(messages):
-        if getattr(msg, "type", None) == "ai" and msg.content:
-            answer = msg.content if isinstance(msg.content, str) else str(msg.content)
-            break
+    answer = result.get("output", "")
 
-    # Extract raw data from the last tool message (best-effort)
-    import json
-    raw_data: Dict[str, Any] | None = None
-    for msg in reversed(messages):
-        if getattr(msg, "type", None) == "tool":
-            try:
-                parsed = json.loads(msg.content)
-                raw_data = parsed.get("raw_data")
-            except (json.JSONDecodeError, ValueError, TypeError):
-                pass
-            break
+    raw_data: Dict[str, Any] | None = get_last_raw_data()
 
     return QueryResponse(
         answer=answer,
         data=raw_data,
-        metadata={"execution_time_ms": elapsed_ms},
+        metadata={"execution_time_ms": elapsed_ms, "llm_latency_ms": None},
     )
 
 
