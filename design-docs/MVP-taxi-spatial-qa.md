@@ -1,10 +1,17 @@
 # MVP Design: Taxi Spatial Q&A System — Singapore
 
+> **Cross-repo docs** — when updating this file, also check:
+> - `gov-data` → `docs/design-doc.md` — upstream REST endpoints, response envelope `{success, data, error}`, `data.type` and `context.type` unions
+> - `gov-data` → `docs/zone-init-design.md` — zone names list must match PLANNING AREAS in system prompt (§6.3)
+> - `civic-frontend` → `docs/apis-data-contract.md` — downstream consumer of `{answer, data, metadata}` response
+> - `civic-frontend` → `docs/design.md` — `POST /api/v1/query` endpoint (§Data Flow), `{answer, data, metadata}` envelope, `data.type` (visualisation mode), `context.type` (label derivation), `layer_id`/`layer_label` fields
+> - Full index: `civic-frontend/docs/cross-repo-index.md`
+
 | Field           | Value                                                      |
 | --------------- | ---------------------------------------------------------- |
 | **Document ID** | MVP-TAXI-SG-2026-001                                       |
-| **Version**     | 1.0                                                        |
-| **Date**        | 2026-02-28                                                 |
+| **Version**     | 1.1                                                        |
+| **Date**        | 2026-03-14                                                 |
 | **Status**      | Active                                                     |
 | **Replaces**    | PRD-TAXI-SG-2026-001, ARCH-TAXI-SG-2026-001                |
 
@@ -15,8 +22,8 @@ Full-scope originals archived in [`full-scope/`](full-scope/).
 ## 1. Overview & Design Principles
 
 This Python project is the **LLM + tool-call layer** of the taxi spatial Q&A system. It receives
-natural-language questions, uses a LangChain **ReAct agent** (GPT-4o-mini) to reason through
-the Java service's OpenAPI spec, discover the right endpoint, call it, and return a natural-language answer.
+natural-language questions, uses a LangChain OpenAPI **planner agent** (GPT-4o-mini) to discover
+the right Java service endpoint, call it, and return a natural-language answer.
 
 **Data ingestion and all spatial SQL** are handled by the **Java service**, which also exposes a
 REST API. This Python app never connects to the database — tools call the Java REST endpoints.
@@ -28,7 +35,7 @@ REST API. This Python app never connects to the database — tools call the Java
   analysis.
 - **The LLM NEVER generates SQL.** It selects a tool and provides parameters; the tool calls the
   Java spatial REST API which executes the parameterised PostGIS query.
-- **MVP scope:** ReAct agent + OpenAPI-driven endpoint discovery, OneMap geocoding, single Docker service, 9 query types, 8 API endpoints.
+- **MVP scope:** OpenAPI planner agent, OneMap geocoding, single Docker service, 9 query types, 8 API endpoints.
 
 ---
 
@@ -81,51 +88,16 @@ All other query types (QT-10 and beyond) are deferred to the [Post-MVP Roadmap](
 
 ## 5. Location Resolution
 
-Place names are resolved to `(lat, lng)` coordinates by a **geocoding tool** that the ReAct
-agent calls before invoking any spatial endpoint. The hardcoded `LANDMARK_COORDS` dict is removed.
+Place names are resolved to `(lat, lng)` coordinates by a synchronous **`geocode_place`** LangChain
+`@tool` that the agent calls before invoking any spatial endpoint. Implementation: `app/tools.py`.
 
-### Option A — Built-in LangChain: `GooglePlacesTool` *(requires Google API key)*
+- **Provider:** OneMap Singapore API (free, no API key required, Singapore-specific).
+- **Endpoint:** `https://www.onemap.gov.sg/api/common/elastic/search`
+- **Timeout:** 10 seconds. Returns structured error messages on timeout or HTTP errors.
+- **Returns:** First result's latitude and longitude as a formatted string.
 
-`langchain_community.tools.GooglePlacesTool` wraps the Google Places API. No custom code needed;
-just add the tool to the agent's tool list.
-
-```python
-# pip install langchain-community googlemaps
-from langchain_community.tools import GooglePlacesTool
-
-geocode_tool = GooglePlacesTool()  # reads GPLACES_API_KEY from env
-# Returns: place name, address, lat/lng, and other metadata as a string
-```
-
-**Env var required:** `GPLACES_API_KEY`
-
-### Option B — OneMap Singapore API *(recommended, free, Singapore-specific)*
-
-[OneMap](https://www.onemap.gov.sg/apidocs/) is the Singapore government’s authoritative
-geocoding service. Better accuracy for local names and no billing. Wrapped as a LangChain `@tool`:
-
-```python
-import httpx
-from langchain_core.tools import tool
-
-@tool
-async def geocode_place(place_name: str) -> str:
-    """Resolve a Singapore place name or address to latitude and longitude."""
-    async with httpx.AsyncClient() as client:
-        resp = await client.get(
-            "https://www.onemap.gov.sg/api/common/elastic/search",
-            params={"searchVal": place_name, "returnGeom": "Y",
-                    "getAddrDetails": "N", "pageNum": 1},
-        )
-        resp.raise_for_status()
-        results = resp.json().get("results", [])
-    if not results:
-        return f"Could not geocode '{place_name}'."
-    r = results[0]
-    return f"{place_name}: lat={r['LATITUDE']}, lng={r['LONGITUDE']}"
-```
-
-**No API key required** for the search endpoint. **Option B is used in this MVP.**
+**Alternative considered:** Google Places API (`GooglePlacesTool`) — rejected for MVP due to billing
+and lower accuracy for Singapore-specific names.
 
 **Supported planning areas (QT-03):** Tampines, Jurong West, Bedok, Woodlands, Hougang, Sengkang,
 Ang Mo Kio, Toa Payoh, Downtown Core, Orchard, Marina South, Queenstown, Clementi, Yishun, Geylang.
@@ -136,128 +108,71 @@ Ang Mo Kio, Toa Payoh, Downtown Core, Orchard, Marina South, Queenstown, Clement
 
 ## 6. LLM Agent
 
-This Python project is the **LLM + tool-call layer only**. A ReAct agent receives a user
-question, reasons step by step (Thought → Action → Observation), discovers the correct Java REST
-endpoint from the OpenAPI spec, calls it, and returns a natural-language answer.
+This Python project is the **LLM + tool-call layer only**. Implementation: `app/agent.py`.
 
 ### 6.1 Architecture Flow
 
 ```
 User question
       ↓
-ReAct Agent (GPT-4o-mini)      ← reasons step-by-step: Thought → Action → Observation
+FastAPI POST /api/v1/query
       ↓
-OpenAPI Toolkit                ← loads Java service's /api-docs at startup
-   ↙                 ↘
-json_spec_tool    requests_get  ← explore spec / execute HTTP GET calls
+OpenAPI Planner Agent (GPT-4o-mini)
       ↓
-Java Spatial REST API          ← no SQL in Python; PostGIS owned by Java service
+   ↙     ↓          ↘
+geocode   api_planner  api_controller
+_place    (select       (execute call
+           endpoint)     via CapturingRequestsWrapper)
       ↓
-JSON result observed by agent
+Java Spatial REST API  (no SQL in Python; PostGIS owned by Java service)
+      ↓
+JSON result captured by CapturingRequestsWrapper
       ↓
 LLM composes natural-language answer
+      ↓
+get_last_raw_data() strips {success,data,error} envelope
+      ↓
+QueryResponse {answer, data, metadata}
 ```
 
 ### 6.2 Agent Setup
 
-```python
-import os
-import httpx
-from langchain_openai import ChatOpenAI
-from langchain_community.agent_toolkits.openapi.spec import reduce_openapi_spec
-from langchain_community.agent_toolkits.openapi import create_openapi_agent
-from langchain_community.agent_toolkits import OpenAPIToolkit
-from langchain_community.utilities.requests import TextRequestsWrapper
-
-JAVA_API_BASE = os.environ["JAVA_SPATIAL_API_URL"]  # e.g. http://localhost:8080
-
-# Load and reduce the OpenAPI spec from the Java service at application startup
-raw_spec = httpx.get(f"{JAVA_API_BASE}/api-docs").json()
-api_spec = reduce_openapi_spec(raw_spec)
-
-llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
-requests_wrapper = TextRequestsWrapper(headers={"Accept": "application/json"})
-toolkit = OpenAPIToolkit.from_llm(llm, api_spec, requests_wrapper, verbose=False)
-
-# Add the OneMap geocoding tool alongside the OpenAPI toolkit tools
-extra_tools = [geocode_place]  # defined in §5 / §7.1
-
-agent_executor = create_openapi_agent(
-    llm=llm,
-    toolkit=toolkit,
-    extra_tools=extra_tools,
-    prefix=SYSTEM_PROMPT,   # see §6.3
-    verbose=False,
-    max_iterations=6,       # +1 to allow a geocoding step
-)
-
-# Usage:
-result = await agent_executor.ainvoke({"input": user_query})
-answer = result["output"]
-```
+- **Module:** `langchain_community.agent_toolkits.openapi.planner`
+- **LLM:** GPT-4o-mini, temperature 0
+- **OpenAPI spec:** Fetched from `{JAVA_SPATIAL_API_URL}/api-docs` at startup, reduced via `reduce_openapi_spec()`
+- **HTTP wrapper:** `CapturingRequestsWrapper` — extends `RequestsWrapper` to record the last raw
+  HTTP response text. After agent invocation, `get_last_raw_data()` parses this response, strips
+  the Java service's `{success, data, error}` envelope, and returns only the `data` object.
+- **Agent creation:** `planner.create_openapi_agent(api_spec, wrapper, llm, extra_tools=[geocode_place])`
+- **Flags:** `allow_dangerous_requests=True` (required for HTTP calls), `handle_parsing_errors=True`, `verbose=True`
+- **Lifecycle:** Singleton pattern — agent is lazily initialised once and reused across requests.
+  Pre-warmed on FastAPI startup (non-blocking if Java service is unreachable).
 
 ### 6.3 System Prompt
 
-Passed as `prefix` to `create_openapi_agent`.
+The current implementation does **not** pass a custom system prompt (`prefix`) to the planner
+agent. The agent relies on the built-in LangChain OpenAPI planner prompt, which instructs the LLM
+to explore the spec, plan the API call, and execute it.
 
-```python
-SYSTEM_PROMPT = """You are a helpful assistant for querying real-time Singapore taxi availability data.
-
-DATA:
-- Source: data.gov.sg, refreshed every 30 s by the Java service.
-- Each record is an anonymous (lat, lng) for one available taxi.
-- NO taxi IDs, NO speed, NO heading. All taxis returned are available (not occupied).
-
-UNITS: Always convert km → metres before calling the API (e.g. 3 km = 3000, 500 m = 500).
-
-STEP ORDER — choose the pattern that fits the question:
-
-  Place-name (radius / nearest / road):
-    1. geocode_place → get lat, lng
-    2. json_spec_tool → confirm params
-    3. requests_get with resolved coordinates
-
-  Named zone (zone/{name}/count):
-    1. Pick the zone name from PLANNING AREAS below (no geocoding needed)
-    2. requests_get directly — skip json_spec_tool if zone param is obvious
-
-  Polygon / Route (POST endpoints):
-    1. geocode_place if a place is mentioned
-    2. json_spec_tool → confirm the expected GeoJSON body schema
-    3. requests_post with the GeoJSON body
-
-  Historical (history/snapshots, history/recent):
-    1. Parse time range or N minutes from the question
-    2. requests_get with ISO-8601 start/end or minutes param
-
-PLANNING AREAS for zone queries (pass name as-is, no geocoding needed):
-  Tampines, Jurong West, Bedok, Woodlands, Hougang, Sengkang, Ang Mo Kio, Toa Payoh,
-  Downtown Core, Orchard, Marina South, Queenstown, Clementi, Yishun, Geylang.
-
-ANSWERING: Always include the snapshot_time from the API response in your final answer
-(e.g. "as of 14:30 SGT"). If the field is absent, omit it.
-
-GEOCODING FAILURE: If geocode_place returns "Could not geocode", ask the user to clarify
-the location or provide coordinates directly. Do not call any spatial endpoint.
-
-UNSUPPORTED — respond without calling any tool and explain why:
-  Tracking a specific taxi, speed/heading queries, ETA, trajectory, or demand inference.
-"""
-```
+**Post-MVP consideration:** A custom prefix can be added to improve accuracy for edge cases
+(unit conversion km→m, planning-area matching, geocoding-failure handling, unsupported query
+rejection).
 
 ---
 
 ## 7. Tools (Geo Query Layer)
 
-The agent has **two tool sources**: one custom geocoding tool, and `OpenAPIToolkit` which exposes
-three individual callable tools to the agent at runtime:
+The agent has **two tool sources**: one custom geocoding tool, and the OpenAPI planner module
+which internally creates two composite tools:
 
 | Tool | Source | What the agent uses it for |
 | ---- | ------ | -------------------------- |
-| `geocode_place` | Custom `@tool` (OneMap API, §5) | Resolve any Singapore place name or address to `lat`/`lng` |
-| `json_spec_tool` | `OpenAPIToolkit` (generated) | Read the Java service spec to discover endpoint paths, parameters, and response schemas |
-| `requests_get` | `OpenAPIToolkit` (generated) | Make HTTP GET calls to Java spatial endpoints (radius, nearest, zone, road, history) |
-| `requests_post` | `OpenAPIToolkit` (generated) | Make HTTP POST calls to Java spatial endpoints (polygon/count, route/count) |
+| `geocode_place` | Custom synchronous `@tool` in `app/tools.py` (OneMap API, §5) | Resolve any Singapore place name or address to `lat`/`lng` |
+| `api_planner` | `planner.create_openapi_agent` (generated) | Read the reduced OpenAPI spec and select the correct endpoint + parameters |
+| `api_controller` | `planner.create_openapi_agent` (generated) | Execute the planned HTTP call via `CapturingRequestsWrapper` and return the response |
+
+The planner agent works in a two-phase loop: `api_planner` identifies which endpoint to call and
+with what parameters, then `api_controller` executes the request.
 
 ### 7.1 Java Service OpenAPI Spec
 
@@ -278,28 +193,20 @@ For history queries `data.type = "timeline"`. The agent must navigate to `data.*
 | `GET /history/snapshots` | `start`, `end` (ISO-8601), optional `zone` | `type:"timeline"`, `from_time`, `to_time`, `snapshots:[{timestamp, taxi_count, locations (FeatureCollection)}]` |
 | `GET /history/recent` | `minutes` (int), optional `zone` | `type:"timeline"`, `from_time`, `to_time`, `window_minutes`, `snapshots:[{timestamp, taxi_count, locations (FeatureCollection)}]` |
 
-### 7.2 Example ReAct Trace (QT-01 with geocoding)
+### 7.2 Example Planner Agent Trace (QT-01 with geocoding)
 
 ```
 User: "How many taxis are within 3 km of Changi Airport?"
 
-Thought: I need to resolve 'Changi Airport' to coordinates first.
-Action: geocode_place
-Action Input: "Changi Airport Singapore"
-Observation: Changi Airport: lat=1.3644, lng=103.9893
+→ geocode_place("Changi Airport Singapore")
+  ← Changi Airport: lat=1.3644, lng=103.9893
 
-Thought: Now find the nearby endpoint in the spec.
-Action: json_spec_tool
-Action Input: {"query": "nearby count radius"}
-Observation: GET /api/v1/taxis/nearby — params: lat (float), lon (float), radius (int, metres), limit (int, optional)
-             Returns: {"success": true, "data": {"type": "spatial_query", "taxi_count": integer, "snapshot_time": string, "context": {"type": "radius", ...}, "locations": GeoJSON FeatureCollection}, "error": null}
+→ api_planner("Find taxis within 3000 metres of lat=1.3644, lon=103.9893")
+  ← 1) GET /api/v1/taxis/nearby with params lat=1.3644, lon=103.9893, radius=3000
 
-Thought: Call the endpoint with the resolved coordinates. 3 km = 3000 metres. Use param name "lon" not "lng".
-Action: requests_get
-Action Input: {"url": "http://localhost:8080/api/v1/taxis/nearby?lat=1.3644&lon=103.9893&radius=3000"}
-Observation: {"success": true, "data": {"type": "spatial_query", "taxi_count": 142, "snapshot_time": "2026-02-28T06:30:00+08:00", "context": {"type": "radius", "lat": 1.3644, "lon": 103.9893, "radius_m": 3000}, "locations": {...}}, "error": null}
+→ api_controller("1) GET /api/v1/taxis/nearby with params lat=1.3644, lon=103.9893, radius=3000")
+  ← {"success": true, "data": {"taxi_count": 142, "snapshot_time": "2026-02-28T06:30:00+08:00", ...}}
 
-Thought: I have the answer.
 Final Answer: There are 142 available taxis within 3 km of Changi Airport as of 06:30 UTC.
 ```
 
@@ -307,27 +214,29 @@ Final Answer: There are 142 available taxis within 3 km of Changi Airport as of 
 
 ## 8. API Design
 
+Implementation: `app/main.py` (FastAPI), `app/models.py` (Pydantic models).
+
 **MVP endpoints:**
 
 | Method | Path                      | Description                  |
 | ------ | ------------------------- | ---------------------------- |
 | POST   | `/api/v1/query`           | Natural language Q&A         |
-| GET    | `/api/v1/snapshot/latest` | Latest snapshot metadata     |
+| GET    | `/api/v1/snapshot/latest` | Latest snapshot metadata (proxied from Java service) |
 | GET    | `/api/v1/health`          | Health check                 |
 
-**Request:**
+**CORS:** All origins, methods, and headers allowed.
+
+**Request — `POST /api/v1/query`:**
 
 ```json
-POST /api/v1/query
-{
-    "query": "How many taxis are within 3km of Changi Airport?"
-}
+{ "query": "How many taxis are within 3km of Changi Airport?" }
 ```
 
-**Response:**
+**Response — `POST /api/v1/query`:**
 
-The `data` field is passed through from the Java service's `data` object (the `success`/`error` envelope is
-stripped; `data.type` and `data.context` are preserved so the frontend can render accordingly).
+The `data` field is extracted from the Java service's last HTTP response via `CapturingRequestsWrapper`.
+The `{success, error}` envelope is stripped; `data.type` and `data.context` are preserved for
+frontend rendering.
 
 ```json
 {
@@ -351,6 +260,23 @@ stripped; `data.type` and `data.context` are preserved so the frontend can rende
     }
 }
 ```
+
+> **Note:** `llm_latency_ms` is currently always `null` — only `execution_time_ms` (total
+> wall-clock time for agent invocation) is measured. Per-LLM-call latency tracking is post-MVP.
+
+**Response — `GET /api/v1/health`:**
+
+```json
+{ "status": "ok", "service": "taxi-spatial-qa", "version": "1.0.0" }
+```
+
+**Error responses:**
+
+| Status | Condition | Detail |
+| ------ | --------- | ------ |
+| 503    | Agent not initialised (Java service unreachable) | "Agent unavailable — Java service may not be running" |
+| 500    | Agent invocation failure | Error message from exception |
+| 502    | `/snapshot/latest` proxy failure | "Could not reach Java service" |
 
 **Removed for MVP:** `POST /api/v1/query/structured`, `GET /api/v1/snapshot/{batch_id}`,
 `GET /api/v1/regions`, `GET /api/v1/regions/{name}/count`, `GET /api/v1/metrics`.
@@ -392,6 +318,8 @@ stripped; `data.type` and `data.context` are preserved so the frontend can rende
 - **QT-11** Statistical aggregation (`taxi_agg_hourly` materialised view — min/max/avg per hour)
 - **QT-12** Trend analysis (linear regression on snapshot counts)
 - **QT-13** Heatmap data (hex grid or KDE via scipy)
+- Custom system prompt for the planner agent (unit conversion, geocoding-failure handling)
+- `llm_latency_ms` tracking in response metadata
 - Table partitioning (daily, via pg_partman)
 - BRIN index + partial index on `captured_at`
 - 3-tier data retention (hot/warm/cold + S3 Parquet)
