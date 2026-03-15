@@ -35,7 +35,7 @@ REST API. This Python app never connects to the database — tools call the Java
   analysis.
 - **The LLM NEVER generates SQL.** It selects a tool and provides parameters; the tool calls the
   Java spatial REST API which executes the parameterised PostGIS query.
-- **MVP scope:** OpenAPI planner agent, OneMap geocoding, single Docker service, 9 query types, 8 API endpoints.
+- **MVP scope:** OpenAPI planner agent, OneMap geocoding, single Docker service, 9 query types, 9 API endpoints (8 JSON + 1 MVT tile).
 
 ---
 
@@ -190,7 +190,7 @@ For history queries `data.type = "timeline"`. The agent must navigate to `data.*
 | `POST /polygon/count` | body: GeoJSON Polygon | `type:"spatial_query"`, `taxi_count`, `snapshot_time`, `context:{type:"polygon", polygon}`, `locations` (FeatureCollection) |
 | `GET /road/{roadName}/count` | path: `roadName`, `buffer_m` | `type:"spatial_query"`, `taxi_count`, `snapshot_time`, `context:{type:"road", road_name, category, buffer_m}`, `locations` (FeatureCollection) |
 | `POST /route/count` | body: GeoJSON LineString, `buffer_m` | `type:"spatial_query"`, `taxi_count`, `snapshot_time`, `context:{type:"route", route, buffer_m}`, `locations` (FeatureCollection) |
-| `GET /history/snapshots` | `start`, `end` (ISO-8601), optional `zone` | `type:"timeline"`, `from_time`, `to_time`, `snapshots:[{timestamp, taxi_count, locations (FeatureCollection)}]` |
+| `GET /history/snapshots` | `start`, `end` (ISO-8601), optional `zone` | `type:"timeline"`, `from_time`, `to_time`, `snapshots:[{snapshot_id, timestamp, taxi_count}]` — **no `locations`**; spatial data served as MVT via `GET /tiles/taxis/{snapshotId}/{z}/{x}/{y}.pbf?zone=` |
 | `GET /history/recent` | `minutes` (int), optional `zone` | `type:"timeline"`, `from_time`, `to_time`, `window_minutes`, `snapshots:[{timestamp, taxi_count, locations (FeatureCollection)}]` |
 
 ### 7.2 Example Planner Agent Trace (QT-01 with geocoding)
