@@ -190,7 +190,7 @@ For history queries `data.type = "timeline"`. The agent must navigate to `data.*
 | `POST /polygon/count` | body: GeoJSON Polygon | `type:"spatial_query"`, `taxi_count`, `snapshot_time`, `context:{type:"polygon", polygon}`, `locations` (FeatureCollection) |
 | `GET /road/{roadName}/count` | path: `roadName`, `buffer_m` | `type:"spatial_query"`, `taxi_count`, `snapshot_time`, `context:{type:"road", road_name, category, buffer_m}`, `locations` (FeatureCollection) |
 | `POST /route/count` | body: GeoJSON LineString, `buffer_m` | `type:"spatial_query"`, `taxi_count`, `snapshot_time`, `context:{type:"route", route, buffer_m}`, `locations` (FeatureCollection) |
-| `GET /history/snapshots` | `start`, `end` (ISO-8601), optional `zone` | `type:"timeline"`, `from_time`, `to_time`, `snapshots:[{snapshot_id, timestamp, taxi_count}]` — **no `locations`**; spatial data served as MVT via `GET /tiles/taxis/{snapshotId}/{z}/{x}/{y}.pbf?zone=` |
+| `GET /history/snapshots` | `start`, `end` (ISO-8601), optional `zone` | `type:"timeline"`, `from_time`, `to_time`, `snapshots:[{snapshot_id, timestamp, taxi_count}]` — **no `locations`**; spatial data served as batched MVT via `GET /tiles/taxis/timeline/{z}/{x}/{y}.pbf?snapshots={ids}&zone=` (all snapshots in one tile, filtered client-side by `snapshot_id` property) |
 | `GET /history/recent` | `minutes` (int), optional `zone` | `type:"timeline"`, `from_time`, `to_time`, `window_minutes`, `snapshots:[{timestamp, taxi_count, locations (FeatureCollection)}]` |
 
 ### 7.2 Example Planner Agent Trace (QT-01 with geocoding)
