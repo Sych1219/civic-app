@@ -1,0 +1,15 @@
+services:
+  taxi-qa:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      - JAVA_SPATIAL_API_URL=${JAVA_SPATIAL_API_URL:-http://host.docker.internal:8080}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
