@@ -1,7 +1,7 @@
 # MVP Design: Taxi Spatial Q&A System — Singapore
 
 > **Cross-repo docs** — when updating this file, also check:
-> - `gov-data` → `docs/design-doc.md` — upstream REST endpoints, response envelope `{success, data, error}`, `data.type` and `context.type` unions
+> - `gov-data` → `docs/taxi-availability-design-doc.md` — upstream REST endpoints, response envelope `{success, data, error}`, `data.type` and `context.type` unions
 > - `gov-data` → `docs/zone-init-design.md` — zone names list must match PLANNING AREAS in system prompt (§6.3)
 > - `civic-frontend` → `docs/apis-data-contract.md` — downstream consumer of `{answer, data, metadata}` response
 > - `civic-frontend` → `docs/design.md` — `POST /api/v1/query` endpoint (§Data Flow), `{answer, data, metadata}` envelope, `data.type` (visualisation mode), `context.type` (label derivation), `layer_id`/`layer_label` fields
