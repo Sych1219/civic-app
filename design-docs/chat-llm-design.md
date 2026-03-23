@@ -72,21 +72,103 @@ The response includes a `view_type` field that tells the frontend which right-pa
 
 ---
 
-## 3. Query Flow
+## 3. LangChain Agent Design
+
+### Two-Phase Architecture
+
+The agent uses a two-phase design to separate cheap text reasoning from expensive vision analysis.
+
+```
+User: "Is CTE jammed?"
+        │
+   ┌────▼──────────────────────────┐
+   │  Phase 1: Route & Fetch       │  ← Text-only LLM with tool-calling
+   │  - classify view_type         │     (gpt-4o-mini, no vision needed)
+   │  - pick gov-data API endpoint │
+   │  - call tool to fetch cameras │
+   └────┬──────────────────────────┘
+        │ cameras + image URLs
+   ┌────▼──────────────────────────┐
+   │  Phase 2: Vision & Synthesize │  ← Multimodal LLM call
+   │  - send images to OpenAI     │     (gpt-4o-mini with vision)
+   │    Vision in parallel         │
+   │  - per-camera structured      │
+   │    analysis (JSON)            │
+   │  - synthesize corridor-level  │
+   │    summary across all cameras │
+   └────┬──────────────────────────┘
+        │
+   { answer, view_type, cameras[] }
+```
+
+### Why Two Phases
+
+- **Cost** — Phase 1 is text-only (cheap). Only Phase 2 uses vision tokens (expensive). If the user says "Show all cameras" (`camera_map`), Phase 2 is skipped entirely — no vision needed, just return the camera list.
+- **Latency** — Phase 2 vision calls are parallelized across cameras with `asyncio.gather`, bringing corridor analysis (e.g., 9 CTE cameras) from ~9× latency down to ~1×.
+- **Reliability** — A single agent loop that tries to fetch → analyze → synthesize risks confused tool-calling. Splitting makes each phase deterministic.
+
+### Phase 1 — Intent Classification + Data Fetch
+
+Uses `ChatOpenAI(model="gpt-4o-mini", temperature=0)` with bound tools:
+
+| Tool | What It Does | Gov-data Endpoint |
+|------|-------------|-------------------|
+| `fetch_all_cameras` | List all cameras with latest snapshot | `GET /api/cameras` |
+| `fetch_camera_detail` | Single camera by ID | `GET /api/cameras/{id}` |
+| `fetch_expressway` | All cameras along a corridor | `GET /api/cameras/expressway/{code}` |
+| `fetch_nearby` | Cameras near a GPS point | `GET /api/cameras/nearby?lat=&lng=&radius=` |
+| `search_cameras` | Search by location name | `GET /api/cameras/search?q=` |
+| `geocode_place` | Resolve place name → lat/lng (reused from taxi agent) | OneMap Singapore API |
+
+The system prompt instructs the LLM to also return a `view_type` classification alongside the tool call. Enforced via `with_structured_output`.
+
+### Phase 2 — Vision Analysis + Synthesis
+
+**Not an agent** — this is a deterministic chain with no tool-calling:
+
+1. For each camera, build a multimodal message containing the image URL + the vision prompt (Section 4)
+2. Fan out all camera analyses in parallel via `asyncio.gather`
+3. Parse structured JSON output per camera (congestion, vehicle_density, etc.)
+4. Run one final LLM call to **synthesize** a corridor-level summary from all per-camera analyses (e.g., "CTE is clear from Ang Mo Kio to Braddell, congested near Moulmein exit")
+
+### When to Skip Phase 2
+
+| `view_type` | Needs Vision? | Reason |
+|---|---|---|
+| `camera_map` | No | Just display camera markers on map |
+| `corridor` | Yes | Need congestion analysis per camera |
+| `camera_detail` | Yes | Single camera deep analysis |
+| `replay` | Yes | Analyze historical frames |
+| `alerts` | Yes | Scan all cameras for incidents |
+
+### Relationship to Existing Taxi Agent
+
+This camera agent is **separate** from the taxi OpenAPI planner in `agent.py` — different LLM config, different tools, different response models. Shared infrastructure:
+
+- `geocode_place` tool (reused from `tools.py`)
+- FastAPI app, CORS config, health check (in `main.py`)
+- Docker and environment setup
+
+> **Note:** `langgraph` is already in `requirements.txt` but not needed for MVP. The two-phase approach is simple enough with plain LangChain + async. LangGraph becomes worthwhile if we add loops (e.g., agent realizes it needs more cameras and re-fetches).
+
+---
+
+## 4. Query Flow
 
 ```
 User query ("Is CTE jammed?")
-  → LLM resolves intent + cameras + view_type
-  → Fetch latest snapshots from gov-data API
-  → Send images to OpenAI Vision
-  → LLM synthesizes response
-  → Return text + view_type + camera data to frontend
-  → Frontend renders the appropriate right-panel component based on view_type
+  → Phase 1: LLM classifies intent → view_type="corridor", tool=fetch_expressway("CTE")
+  → Phase 1: Tool fetches 9 CTE cameras from gov-data API
+  → Phase 2: 9 camera images sent to OpenAI Vision in parallel
+  → Phase 2: Per-camera JSON analysis returned
+  → Phase 2: LLM synthesizes corridor summary across all 9 analyses
+  → Return { answer, view_type, cameras[] } to frontend
+  → Frontend renders CorridorMap component based on view_type
 ```
 
 ---
 
-## 4. Vision Analysis Prompt
+## 5. Vision Analysis Prompt (used in Phase 2)
 
 ```
 You are a Singapore traffic analyst. Analyze this traffic camera image.
@@ -108,7 +190,7 @@ Respond in JSON format.
 
 ---
 
-## 5. Supported Query Types
+## 6. Supported Query Types
 
 | User Says | Behavior | `view_type` |
 |-----------|----------|-------------|
@@ -123,7 +205,7 @@ Respond in JSON format.
 
 ---
 
-## 6. Cost Estimate
+## 7. Cost Estimate
 
 Vision analysis is **on-demand only** — triggered by user queries, not background jobs.
 
@@ -135,7 +217,7 @@ Vision analysis is **on-demand only** — triggered by user queries, not backgro
 
 ---
 
-## 7. Dependencies
+## 8. Dependencies
 
 - **gov-data API** — provides camera data and latest snapshots (see `gov-data` → `docs/traffic-image-design-doc.md` Section 5)
   - `GET /api/cameras` — list all cameras with latest snapshot
