@@ -12,7 +12,7 @@ For overall system context, see `gov-data` → `docs/traffic-image-design-doc.md
 
 ```
 civic-frontend (Next.js)
-    ↓ POST /api/chat
+    ↓ POST /api/traffic-chat
 civic-app (Python LLM service)  ← this project
     ↓ GET /api/cameras/...
 gov-data (Java backend, PostgreSQL)
@@ -24,7 +24,7 @@ gov-data (Java backend, PostgreSQL)
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/api/chat` | Natural language query → LLM-powered response (body: `{ "message": "Is CTE jammed?" }`) |
+| POST | `/api/traffic-chat` | Natural language query → LLM-powered response (body: `{ "message": "Is CTE jammed?" }`) |
 
 ### Request
 
@@ -226,4 +226,4 @@ Vision analysis is **on-demand only** — triggered by user queries, not backgro
   - `GET /api/cameras/nearby?lat=&lng=&radius=` — cameras by location
   - `GET /api/cameras/search?q=` — cameras by name
 - **Claude API** — LLM vision analysis (Haiku for cost efficiency)
-- **civic-frontend** — consumes this service's `/api/chat` endpoint and renders the appropriate view based on `view_type` (see `civic-frontend` → `docs/traffic-camera-ui-design.md`)
+- **civic-frontend** — consumes this service's `/api/traffic-chat` endpoint and renders the appropriate view based on `view_type` (see `civic-frontend` → `docs/traffic-camera-ui-design.md`)
