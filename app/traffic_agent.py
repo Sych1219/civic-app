@@ -83,13 +83,14 @@ Singapore expressways: CTE, PIE, AYE, BKE, KPE, SLE, TPE, MCE, ECP, KJE, NYCH, T
 _VISION_PROMPT = """You are a Singapore traffic analyst. Analyze this traffic camera image.
 
 Camera: {camera_id} — {location_name}
+Expressway: {expressway_code}
 Time: {timestamp}
 
 Respond with ONLY a JSON object:
 {{
   "congestion": "free_flow | light | moderate | heavy | standstill",
   "vehicle_density": "empty | sparse | normal | dense | packed",
-  "incidents": "None visible, or describe any accident/breakdown/obstruction",
+  "incidents": "none | accident | breakdown | obstruction | roadworks",
   "weather": "clear | rain | heavy_rain | fog",
   "road_surface": "dry | wet | flooded | construction",
   "summary": "One sentence describing what you see."
@@ -153,7 +154,11 @@ async def _fetch_cameras(decision: Phase1Result) -> list[CameraDetail]:
 
 # ─── Phase 2 ─────────────────────────────────────────────────────────────────
 
-async def _analyze_camera(camera: CameraDetail, llm: ChatOpenAI) -> CameraDetail:
+async def _analyze_camera(
+        camera: CameraDetail,
+        llm: ChatOpenAI,
+        expressway_code: str = "",
+) -> CameraDetail:
     """Send one camera image to the vision LLM and return the camera with analysis populated."""
     if not camera.latestImage:
         return camera
@@ -161,6 +166,7 @@ async def _analyze_camera(camera: CameraDetail, llm: ChatOpenAI) -> CameraDetail
     prompt = _VISION_PROMPT.format(
         camera_id=camera.cameraId,
         location_name=camera.locationName or "Unknown location",
+        expressway_code=expressway_code or "N/A",
         timestamp=camera.timestamp,
     )
 
@@ -202,7 +208,7 @@ async def _synthesize(
         for cam in analyzed_cameras
     )
 
-    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0, max_retries=6)
     response = await llm.ainvoke([
         HumanMessage(content=_SYNTHESIS_PROMPT.format(
             user_message=user_message,
@@ -233,11 +239,17 @@ async def run_traffic_chat(user_message: str) -> Dict[str, Any]:
         )
         return {"answer": answer, "view_type": decision.view_type, "cameras": cameras}
 
-    # Phase 2: vision analysis (parallelised) + synthesis
-    vision_llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
-    analyzed = list(
-        await asyncio.gather(*[_analyze_camera(cam, vision_llm) for cam in cameras])
-    )
+    # Phase 2: vision analysis (parallelised, semaphore-throttled) + synthesis
+    # max_retries=6 gives exponential backoff up to ~60s, enough for TPM window recovery
+    vision_llm = ChatOpenAI(model="gpt-4o-mini", temperature=0, max_retries=6)
+    expressway_code = decision.expressway_code or ""
+    sem = asyncio.Semaphore(3)
+
+    async def _bounded(cam: CameraDetail) -> CameraDetail:
+        async with sem:
+            return await _analyze_camera(cam, vision_llm, expressway_code)
+
+    analyzed = list(await asyncio.gather(*[_bounded(cam) for cam in cameras]))
 
     answer = await _synthesize(user_message, analyzed)
 
