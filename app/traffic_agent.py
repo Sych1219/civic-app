@@ -251,6 +251,15 @@ async def run_traffic_chat(user_message: str) -> Dict[str, Any]:
 
     analyzed = list(await asyncio.gather(*[_bounded(cam) for cam in cameras]))
 
-    answer = await _synthesize(user_message, analyzed)
+    for attempt in range(3):
+        try:
+            answer = await _synthesize(user_message, analyzed)
+            break
+        except Exception as exc:
+            if attempt == 2:
+                raise
+            wait = 2 ** attempt
+            logger.warning("Synthesis attempt %d failed, retrying in %ds: %s", attempt + 1, wait, exc)
+            await asyncio.sleep(wait)
 
     return {"answer": answer, "view_type": decision.view_type, "cameras": analyzed}
