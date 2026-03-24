@@ -10,7 +10,8 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.agent import get_agent, get_last_raw_data
-from app.models import HealthResponse, QueryRequest, QueryResponse
+from app.models import HealthResponse, QueryRequest, QueryResponse, TrafficChatRequest, TrafficChatResponse
+from app.traffic_agent import run_traffic_chat
 
 load_dotenv()
 
@@ -79,6 +80,21 @@ async def query(request: QueryRequest):
         data=raw_data,
         metadata={"execution_time_ms": elapsed_ms, "llm_latency_ms": None},
     )
+
+
+@app.post("/api/traffic-chat", response_model=TrafficChatResponse)
+async def traffic_chat(request: TrafficChatRequest):
+    """Natural language query → LLM-powered traffic camera analysis."""
+    t0 = time.monotonic()
+    try:
+        result = await run_traffic_chat(request.message)
+    except Exception as exc:
+        logger.error("Traffic chat failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    elapsed_ms = int((time.monotonic() - t0) * 1000)
+    logger.info("Traffic chat completed in %dms", elapsed_ms)
+    return TrafficChatResponse(**result)
 
 
 @app.get("/api/v1/snapshot/latest")
