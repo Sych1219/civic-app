@@ -67,7 +67,7 @@ The response includes a `view_type` field that tells the frontend which right-pa
 | `camera_map` | CameraMap | "Show all cameras", "Which cameras are online?" |
 | `corridor` | CorridorMap | "Is CTE jammed?", "BKE cameras" |
 | `camera_detail` | CameraDetail | "Show camera 1005", specific camera queries |
-| `replay` | ReplayPlayer | "Show Woodlands at 8am" |
+| `snapshot` | SnapshotViewer | "Show Woodlands at 8am" |
 | `alerts` | AlertsPanel | "Any incidents right now?" |
 
 ---
@@ -138,7 +138,7 @@ The system prompt instructs the LLM to also return a `view_type` classification 
 | `camera_map` | No | Just display camera markers on map |
 | `corridor` | Yes | Need congestion analysis per camera |
 | `camera_detail` | Yes | Single camera deep analysis |
-| `replay` | Yes | Analyze historical frames |
+| `snapshot` | Yes | Analyze historical frames |
 | `alerts` | Yes | Scan all cameras for incidents |
 
 ### Relationship to Existing Taxi Agent
@@ -221,7 +221,7 @@ Each camera in the response `cameras[]` array includes an `analysis` object prod
 | "Is CTE jammed?" | Fetch CTE cameras → LLM vision analysis → corridor summary | `corridor` |
 | "Show camera 1005" | Single camera detail + LLM analysis | `camera_detail` |
 | "Cameras near me" | Find nearest cameras by lat/lng | `camera_map` |
-| "Show Woodlands at 8am" | Historical replay with LLM narration | `replay` |
+| "Show Woodlands at 8am" | Historical snapshot with LLM narration | `snapshot` |
 | "Any accidents right now?" | Fetch all cameras → LLM scans for incidents | `alerts` |
 
 ---
