@@ -180,7 +180,7 @@ Time: {timestamp}
 Provide a structured assessment:
 1. Congestion: free_flow | light | moderate | heavy | standstill
 2. Vehicle density: empty | sparse | normal | dense | packed
-3. Incidents: Any visible accident, breakdown, or obstruction? Describe if yes.
+3. Incidents: none | accident | breakdown | obstruction | roadworks
 4. Weather: clear | rain | heavy_rain | fog
 5. Road surface: dry | wet | flooded | construction
 6. Summary: One sentence describing what you see.
@@ -190,7 +190,28 @@ Respond in JSON format.
 
 ---
 
-## 6. Supported Query Types
+## 6. `analysis` Object Definition
+
+Each camera in the response `cameras[]` array includes an `analysis` object produced by Phase 2 vision analysis.
+
+| Field | Type | Allowed Values | Description |
+|---|---|---|---|
+| `congestion` | `string` | `free_flow` \| `light` \| `moderate` \| `heavy` \| `standstill` | Overall traffic flow level on the road segment visible in the image |
+| `vehicle_density` | `string` | `empty` \| `sparse` \| `normal` \| `dense` \| `packed` | How tightly vehicles are packed in the frame |
+| `incidents` | `string` | `none` \| `accident` \| `breakdown` \| `obstruction` \| `roadworks` | Most severe incident type visible in the frame; `none` if nothing detected |
+| `weather` | `string` | `clear` \| `rain` \| `heavy_rain` \| `fog` | Ambient weather conditions inferred from the image |
+| `road_surface` | `string` | `dry` \| `wet` \| `flooded` \| `construction` | Visible road surface condition |
+| `summary` | `string` | Free text (one sentence) | Human-readable sentence describing what the LLM sees in the image |
+
+### Notes
+
+- All fields are **required** — the Phase 2 vision prompt enforces structured JSON output with all six fields.
+- If the LLM cannot determine a field (e.g., road surface is not visible), it should default to the most conservative value (e.g., `"dry"` for road surface, `"none"` for incidents).
+- `summary` is used directly in the frontend camera card tooltip and should be concise (≤ 20 words).
+
+---
+
+## 7. Supported Query Types
 
 | User Says | Behavior | `view_type` |
 |-----------|----------|-------------|
@@ -205,7 +226,7 @@ Respond in JSON format.
 
 ---
 
-## 7. Cost Estimate
+## 8. Cost Estimate
 
 Vision analysis is **on-demand only** — triggered by user queries, not background jobs.
 
@@ -217,7 +238,7 @@ Vision analysis is **on-demand only** — triggered by user queries, not backgro
 
 ---
 
-## 8. Dependencies
+## 9. Dependencies
 
 - **gov-data API** — provides camera data and latest snapshots (see `gov-data` → `docs/traffic-image-design-doc.md` Section 5)
   - `GET /api/cameras` — list all cameras with latest snapshot
