@@ -39,6 +39,16 @@ class CameraDetail(BaseModel):
     analysis: Optional[CameraAnalysis] = None
 
 
+class AnalyzeCameraRequest(BaseModel):
+    image_url: str
+    camera_id: Optional[str] = None
+    location_name: Optional[str] = None
+
+
+class AnalyzeCameraResponse(BaseModel):
+    analysis: CameraAnalysis
+
+
 class TrafficChatRequest(BaseModel):
     message: str
 

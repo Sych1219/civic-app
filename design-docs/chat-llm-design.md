@@ -53,7 +53,6 @@ The response includes a `view_type` field that tells the frontend which right-pa
       "analysis": {
         "congestion": "heavy",
         "vehicle_density": "packed",
-        "vehicle_count": 41,
         "incidents": "None visible",
         "weather": "clear",
         "road_surface": "dry",
@@ -227,11 +226,10 @@ Time: {timestamp}
 Provide a structured assessment:
 1. Congestion: free_flow | light | moderate | heavy | standstill
 2. Vehicle density: empty | sparse | normal | dense | packed
-3. Vehicle count: integer estimate of the number of vehicles visible in the frame
-4. Incidents: none | accident | breakdown | obstruction | roadworks
-5. Weather: clear | rain | heavy_rain | fog
-6. Road surface: dry | wet | flooded | construction
-7. Summary: One sentence describing what you see.
+3. Incidents: none | accident | breakdown | obstruction | roadworks
+4. Weather: clear | rain | heavy_rain | fog
+5. Road surface: dry | wet | flooded | construction
+6. Summary: One sentence describing what you see.
 
 Respond in JSON format.
 ```
@@ -246,7 +244,6 @@ Each camera in the response `cameras[]` array includes an `analysis` object prod
 |---|---|---|---|
 | `congestion` | `string` | `free_flow` \| `light` \| `moderate` \| `heavy` \| `standstill` | Overall traffic flow level on the road segment visible in the image |
 | `vehicle_density` | `string` | `empty` \| `sparse` \| `normal` \| `dense` \| `packed` | How tightly vehicles are packed in the frame |
-| `vehicle_count` | `integer` | Non-negative integer (e.g., `0`, `12`, `47`) | Estimated number of vehicles visible in the frame; `null` if the LLM cannot determine a count |
 | `incidents` | `string` | `none` \| `accident` \| `breakdown` \| `obstruction` \| `roadworks` | Most severe incident type visible in the frame; `none` if nothing detected |
 | `weather` | `string` | `clear` \| `rain` \| `heavy_rain` \| `fog` | Ambient weather conditions inferred from the image |
 | `road_surface` | `string` | `dry` \| `wet` \| `flooded` \| `construction` | Visible road surface condition |

@@ -10,8 +10,8 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.agent import get_agent, get_last_raw_data
-from app.models import HealthResponse, QueryRequest, QueryResponse, TrafficChatRequest, TrafficChatResponse
-from app.traffic_agent import run_traffic_chat
+from app.models import AnalyzeCameraRequest, AnalyzeCameraResponse, HealthResponse, QueryRequest, QueryResponse, TrafficChatRequest, TrafficChatResponse
+from app.traffic_agent import analyze_camera_from_url, run_traffic_chat
 
 load_dotenv()
 
@@ -116,6 +116,24 @@ async def traffic_chat(request: TrafficChatRequest):
     elapsed_ms = int((time.monotonic() - t0) * 1000)
     logger.info("Traffic chat completed in %dms", elapsed_ms)
     return TrafficChatResponse(**result)
+
+
+@app.post("/api/analyze-camera", response_model=AnalyzeCameraResponse)
+async def analyze_camera(request: AnalyzeCameraRequest):
+    """Analyze a single camera image by URL — Phase 2 only."""
+    try:
+        analysis = await analyze_camera_from_url(
+            request.image_url,
+            request.camera_id or "",
+            request.location_name or "",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except Exception as exc:
+        logger.error("analyze-camera failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    return AnalyzeCameraResponse(analysis=analysis)
 
 
 @app.get("/api/v1/snapshot/latest")

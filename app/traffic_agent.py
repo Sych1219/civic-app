@@ -19,7 +19,6 @@ from typing import Any, Dict, Literal, Optional
 import httpx
 from PIL import Image
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_ollama import ChatOllama
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel
 
@@ -161,7 +160,7 @@ async def _fetch_cameras(decision: Phase1Result) -> list[CameraDetail]:
 
 async def _analyze_camera(
         camera: CameraDetail,
-        llm: ChatOllama,
+        llm: ChatOpenAI,
         expressway_code: str = "",
 ) -> CameraDetail:
     """Download camera image, base64-encode it, send to Ollama vision, return camera with analysis."""
@@ -234,6 +233,45 @@ async def _synthesize(
         ))
     ])
     return response.content
+
+
+# ─── analyze-camera endpoint (Phase 2 only) ──────────────────────────────────
+
+async def analyze_camera_from_url(
+        image_url: str,
+        camera_id: str = "",
+        location_name: str = "",
+) -> CameraAnalysis:
+    """Fetch image from URL, analyze it — no Phase 1, no gov-data fetch."""
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            img_resp = await client.get(image_url)
+            img_resp.raise_for_status()
+        img = Image.open(io.BytesIO(img_resp.content)).convert("RGB")
+        img.thumbnail((640, 480))
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=85)
+        image_b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+    except Exception as exc:
+        raise ValueError(f"Could not fetch or decode image: {exc}") from exc
+
+    prompt = _VISION_PROMPT.format(
+        camera_id=camera_id or "N/A",
+        location_name=location_name or "Unknown location",
+        expressway_code="N/A",
+        timestamp="N/A",
+    )
+
+    messages = [
+        HumanMessage(content=[
+            {"type": "text", "text": prompt},
+            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}},
+        ])
+    ]
+
+    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0, max_retries=6)
+    structured_llm = llm.with_structured_output(CameraAnalysis)
+    return await structured_llm.ainvoke(messages)
 
 
 # ─── Public entry point ───────────────────────────────────────────────────────
