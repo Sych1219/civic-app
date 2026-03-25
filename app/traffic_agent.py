@@ -259,6 +259,7 @@ async def run_traffic_chat(user_message: str) -> Dict[str, Any]:
 
     # Phase 2: vision analysis (parallelised) + synthesis
     # num_predict=256 caps output (JSON is ~100 tokens); keep_alive=-1 keeps model hot in memory
+    # vision_llm = ChatOpenAI(model="gpt-4o-mini", temperature=0, max_retries=6)
     vision_llm = ChatOllama(model="qwen3.5", temperature=0, reasoning=False, num_predict=256, keep_alive=-1)
     expressway_code = decision.expressway_code or ""
 
