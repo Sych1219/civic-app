@@ -20,13 +20,16 @@ gov-data (Java backend, PostgreSQL)
 
 ---
 
-## 2. API Endpoint
+## 2. API Endpoints
 
 | Method | Path | Description |
 |--------|------|-------------|
 | POST | `/api/traffic-chat` | Natural language query → LLM-powered response (body: `{ "message": "Is CTE jammed?" }`) |
+| POST | `/api/analyze-camera` | Submit a single camera image → returns structured `analysis` object |
 
-### Request
+### `POST /api/traffic-chat`
+
+#### Request
 
 ```json
 {
@@ -34,7 +37,7 @@ gov-data (Java backend, PostgreSQL)
 }
 ```
 
-### Response
+#### Response
 
 The response includes a `view_type` field that tells the frontend which right-panel component to render (see `civic-frontend` → `docs/traffic-camera-ui-design.md` Section 11 for view routing).
 
@@ -50,6 +53,7 @@ The response includes a `view_type` field that tells the frontend which right-pa
       "analysis": {
         "congestion": "heavy",
         "vehicle_density": "packed",
+        "vehicle_count": 41,
         "incidents": "None visible",
         "weather": "clear",
         "road_surface": "dry",
@@ -60,7 +64,7 @@ The response includes a `view_type` field that tells the frontend which right-pa
 }
 ```
 
-### `view_type` Values
+#### `view_type` Values
 
 | `view_type` | Frontend Component | When to Return |
 |---|---|---|
@@ -69,6 +73,47 @@ The response includes a `view_type` field that tells the frontend which right-pa
 | `camera_detail` | CameraDetail | "Show camera 1005", specific camera queries |
 | `snapshot` | SnapshotViewer | "Show Woodlands at 8am" |
 | `alerts` | AlertsPanel | "Any incidents right now?" |
+
+---
+
+### `POST /api/analyze-camera`
+
+Directly analyze a single camera image without going through the chat flow. Useful for on-demand re-analysis of a specific camera from the frontend.
+
+#### Request
+
+`multipart/form-data` with the following fields:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `image` | `file` | Yes | The camera snapshot image (JPEG or PNG) |
+| `camera_id` | `string` | No | Camera ID — included in the vision prompt for context |
+| `location_name` | `string` | No | Human-readable location label — included in the vision prompt |
+
+#### Response
+
+```json
+{
+  "analysis": {
+    "congestion": "heavy",
+    "vehicle_density": "packed",
+    "vehicle_count": 41,
+    "incidents": "none",
+    "weather": "clear",
+    "road_surface": "dry",
+    "summary": "Heavy bumper-to-bumper traffic visible near the Ang Mo Kio exit."
+  }
+}
+```
+
+The `analysis` fields follow the same schema defined in Section 6.
+
+#### Notes
+
+- This endpoint runs **Phase 2 only** — no Phase 1 intent classification or gov-data fetch.
+- The uploaded image is base64-encoded internally before being sent to Ollama; callers do not need to encode it.
+- `camera_id` and `location_name` are optional but recommended — they are injected into the vision prompt (Section 5) to improve analysis accuracy.
+- Returns HTTP 422 if `image` is missing or not a supported format.
 
 ---
 
@@ -182,10 +227,11 @@ Time: {timestamp}
 Provide a structured assessment:
 1. Congestion: free_flow | light | moderate | heavy | standstill
 2. Vehicle density: empty | sparse | normal | dense | packed
-3. Incidents: none | accident | breakdown | obstruction | roadworks
-4. Weather: clear | rain | heavy_rain | fog
-5. Road surface: dry | wet | flooded | construction
-6. Summary: One sentence describing what you see.
+3. Vehicle count: integer estimate of the number of vehicles visible in the frame
+4. Incidents: none | accident | breakdown | obstruction | roadworks
+5. Weather: clear | rain | heavy_rain | fog
+6. Road surface: dry | wet | flooded | construction
+7. Summary: One sentence describing what you see.
 
 Respond in JSON format.
 ```
@@ -200,6 +246,7 @@ Each camera in the response `cameras[]` array includes an `analysis` object prod
 |---|---|---|---|
 | `congestion` | `string` | `free_flow` \| `light` \| `moderate` \| `heavy` \| `standstill` | Overall traffic flow level on the road segment visible in the image |
 | `vehicle_density` | `string` | `empty` \| `sparse` \| `normal` \| `dense` \| `packed` | How tightly vehicles are packed in the frame |
+| `vehicle_count` | `integer` | Non-negative integer (e.g., `0`, `12`, `47`) | Estimated number of vehicles visible in the frame; `null` if the LLM cannot determine a count |
 | `incidents` | `string` | `none` \| `accident` \| `breakdown` \| `obstruction` \| `roadworks` | Most severe incident type visible in the frame; `none` if nothing detected |
 | `weather` | `string` | `clear` \| `rain` \| `heavy_rain` \| `fog` | Ambient weather conditions inferred from the image |
 | `road_surface` | `string` | `dry` \| `wet` \| `flooded` \| `construction` | Visible road surface condition |
