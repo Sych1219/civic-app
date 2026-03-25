@@ -82,9 +82,30 @@ async def query(request: QueryRequest):
     )
 
 
+_MOCK_TRAFFIC_RESPONSE = {
+    "answer": "The CTE is not jammed. Traffic is flowing moderately in some areas, while other sections are experiencing free-flow conditions. Overall, vehicle density is normal, and there are no incidents reported.",
+    "view_type": "corridor",
+    "cameras": [
+        {"cameraId": 1701, "locationName": None, "latitude": 1.32360482, "longitude": 103.8587802, "latestImage": "https://images.data.gov.sg/api/traffic-images/2026/03/6a959f48-4b32-463d-988a-d12576b38d6d.jpg", "timestamp": "2026-03-24T17:01:11+08:00", "resolution": "HD", "analysis": {"congestion": "moderate", "vehicle_density": "normal", "incidents": "none", "weather": "clear", "road_surface": "dry", "summary": "Traffic is flowing moderately on the CTE with a normal density of vehicles and clear weather conditions."}},
+        {"cameraId": 1703, "locationName": None, "latitude": 1.32814722, "longitude": 103.86220328, "latestImage": "https://images.data.gov.sg/api/traffic-images/2026/03/1cb14b17-8ebb-49d9-847f-6f8fe2abc8de.jpg", "timestamp": "2026-03-24T17:01:11+08:00", "resolution": "HD", "analysis": {"congestion": "free_flow", "vehicle_density": "normal", "incidents": "none", "weather": "clear", "road_surface": "dry", "summary": "Traffic is flowing smoothly with a normal density of vehicles on the CTE expressway."}},
+        {"cameraId": 1704, "locationName": None, "latitude": 1.28569399, "longitude": 103.83752451, "latestImage": "https://images.data.gov.sg/api/traffic-images/2026/03/0163fbd3-5784-48fa-b6d3-d181dc391086.jpg", "timestamp": "2026-03-24T17:01:11+08:00", "resolution": "HD", "analysis": {"congestion": "light", "vehicle_density": "normal", "incidents": "none", "weather": "clear", "road_surface": "dry", "summary": "Traffic is flowing smoothly with a normal density of vehicles on the expressway."}},
+        {"cameraId": 1702, "locationName": None, "latitude": 1.34355015, "longitude": 103.8601984, "latestImage": "https://images.data.gov.sg/api/traffic-images/2026/03/c3308c3f-9300-4224-af9e-18211f065294.jpg", "timestamp": "2026-03-24T17:01:11+08:00", "resolution": "HD", "analysis": {"congestion": "moderate", "vehicle_density": "normal", "incidents": "none", "weather": "clear", "road_surface": "dry", "summary": "Traffic is moving at a moderate pace with a normal density of vehicles on the CTE."}},
+        {"cameraId": 1706, "locationName": None, "latitude": 1.38861, "longitude": 103.85806, "latestImage": "https://images.data.gov.sg/api/traffic-images/2026/03/5371013e-388b-4720-a08d-5db5944b6b83.jpg", "timestamp": "2026-03-24T17:01:11+08:00", "resolution": "HD", "analysis": {"congestion": "free_flow", "vehicle_density": "normal", "incidents": "none", "weather": "clear", "road_surface": "dry", "summary": "Traffic is flowing smoothly with a normal density of vehicles on the expressway."}},
+        {"cameraId": 1709, "locationName": None, "latitude": 1.31384232, "longitude": 103.84560303, "latestImage": "https://images.data.gov.sg/api/traffic-images/2026/03/3c6e66fc-5cca-4d3f-bfc8-90ddf7d07ad2.jpg", "timestamp": "2026-03-24T17:01:11+08:00", "resolution": "HD", "analysis": {"congestion": "free_flow", "vehicle_density": "normal", "incidents": "none", "weather": "clear", "road_surface": "dry", "summary": "Traffic is flowing smoothly with a normal density of vehicles on the expressway."}},
+        {"cameraId": 1707, "locationName": None, "latitude": 1.28036584, "longitude": 103.83045115, "latestImage": "https://images.data.gov.sg/api/traffic-images/2026/03/ff0a6bea-f3a2-4e90-9381-ca73a1c09f5f.jpg", "timestamp": "2026-03-24T17:01:11+08:00", "resolution": "HD", "analysis": {"congestion": "free_flow", "vehicle_density": "sparse", "incidents": "none", "weather": "clear", "road_surface": "dry", "summary": "The traffic is flowing freely with a sparse vehicle presence on the road."}},
+        {"cameraId": 1705, "locationName": None, "latitude": 1.37592502, "longitude": 103.8587986, "latestImage": "https://images.data.gov.sg/api/traffic-images/2026/03/b5672ee8-e115-4a37-bde7-f7a7bac0998e.jpg", "timestamp": "2026-03-24T17:01:11+08:00", "resolution": "HD", "analysis": {"congestion": "free_flow", "vehicle_density": "normal", "incidents": "none", "weather": "clear", "road_surface": "dry", "summary": "Traffic is flowing freely with a normal density of vehicles on a clear day."}},
+        {"cameraId": 1711, "locationName": None, "latitude": 1.35296, "longitude": 103.85719, "latestImage": "https://images.data.gov.sg/api/traffic-images/2026/03/7fcb6cce-8deb-4b0f-96ca-4b0d369ca521.jpg", "timestamp": "2026-03-24T17:01:11+08:00", "resolution": "HD", "analysis": {"congestion": "light", "vehicle_density": "normal", "incidents": "none", "weather": "clear", "road_surface": "dry", "summary": "Traffic is flowing smoothly with a normal density of vehicles on the CTE."}},
+    ],
+}
+
+
 @app.post("/api/traffic-chat", response_model=TrafficChatResponse)
 async def traffic_chat(request: TrafficChatRequest):
     """Natural language query → LLM-powered traffic camera analysis."""
+    if os.environ.get("MOCK_TRAFFIC_CHAT", "").lower() == "true":
+        logger.info("MOCK_TRAFFIC_CHAT enabled — returning hardcoded response")
+        return TrafficChatResponse(**_MOCK_TRAFFIC_RESPONSE)
+
     t0 = time.monotonic()
     try:
         result = await run_traffic_chat(request.message)

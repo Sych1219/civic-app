@@ -5,7 +5,7 @@ pydantic
 
 # LLM & AI
 langchain
-langchain-openai
+langchain-ollama
 langchain-community
 langchain-core
 langgraph
@@ -17,3 +17,4 @@ httpx
 # Utilities
 python-dotenv
 PyYAML
+Pillow

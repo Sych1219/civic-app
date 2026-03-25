@@ -2,7 +2,7 @@
 
 ## Background
 
-This service is the LLM-powered intelligence layer of the traffic camera system. It receives natural language queries from users, determines which cameras are relevant, fetches their latest snapshots from `gov-data` (Java backend), and uses OpenAI Vision to analyze the images and return a human-readable assessment.
+This service is the LLM-powered intelligence layer of the traffic camera system. It receives natural language queries from users, determines which cameras are relevant, fetches their latest snapshots from `gov-data` (Java backend), and uses Ollama (local) running **qwen3.5** to analyze the images and return a human-readable assessment.
 
 For overall system context, see `gov-data` → `docs/traffic-image-design-doc.md`.
 
@@ -83,14 +83,14 @@ User: "Is CTE jammed?"
         │
    ┌────▼──────────────────────────┐
    │  Phase 1: Route & Fetch       │  ← Text-only LLM with tool-calling
-   │  - classify view_type         │     (gpt-4o-mini, no vision needed)
+   │  - classify view_type         │     (Ollama qwen3.5, no vision needed)
    │  - pick gov-data API endpoint │
    │  - call tool to fetch cameras │
    └────┬──────────────────────────┘
         │ cameras + image URLs
    ┌────▼──────────────────────────┐
    │  Phase 2: Vision & Synthesize │  ← Multimodal LLM call
-   │  - send images to OpenAI     │     (gpt-4o-mini with vision)
+   │  - send images to Ollama     │     (qwen3.5 with vision, local)
    │    Vision in parallel         │
    │  - per-camera structured      │
    │    analysis (JSON)            │
@@ -103,13 +103,13 @@ User: "Is CTE jammed?"
 
 ### Why Two Phases
 
-- **Cost** — Phase 1 is text-only (cheap). Only Phase 2 uses vision tokens (expensive). If the user says "Show all cameras" (`camera_map`), Phase 2 is skipped entirely — no vision needed, just return the camera list.
-- **Latency** — Phase 2 vision calls are parallelized across cameras with `asyncio.gather`, bringing corridor analysis (e.g., 9 CTE cameras) from ~9× latency down to ~1×.
+- **Latency** — Phase 1 (text-only) is fast. Phase 2 vision calls are parallelized across cameras with `asyncio.gather`, bringing corridor analysis (e.g., 9 CTE cameras) from ~9× latency down to ~1×. Since Ollama runs locally, skipping unnecessary vision calls keeps response times low.
 - **Reliability** — A single agent loop that tries to fetch → analyze → synthesize risks confused tool-calling. Splitting makes each phase deterministic.
+- **Resource efficiency** — Vision inference is heavier than text-only inference on local hardware. If the user says "Show all cameras" (`camera_map`), Phase 2 is skipped entirely — no vision pass needed, just return the camera list.
 
 ### Phase 1 — Intent Classification + Data Fetch
 
-Uses `ChatOpenAI(model="gpt-4o-mini", temperature=0)` with bound tools:
+Uses `ChatOllama(model="qwen3.5", temperature=0)` with bound tools:
 
 | Tool | What It Does | Gov-data Endpoint |
 |------|-------------|-------------------|
@@ -126,10 +126,12 @@ The system prompt instructs the LLM to also return a `view_type` classification 
 
 **Not an agent** — this is a deterministic chain with no tool-calling:
 
-1. For each camera, build a multimodal message containing the image URL + the vision prompt (Section 4)
+1. For each camera, download the image and encode it as base64, then build a multimodal message containing the image + the vision prompt (Section 4)
 2. Fan out all camera analyses in parallel via `asyncio.gather`
 3. Parse structured JSON output per camera (congestion, vehicle_density, etc.)
 4. Run one final LLM call to **synthesize** a corridor-level summary from all per-camera analyses (e.g., "CTE is clear from Ang Mo Kio to Braddell, congested near Moulmein exit")
+
+> **Note:** Ollama requires images as base64-encoded bytes, not URLs. Download each camera snapshot before sending to the model.
 
 ### When to Skip Phase 2
 
@@ -159,7 +161,7 @@ This camera agent is **separate** from the taxi OpenAPI planner in `agent.py` �
 User query ("Is CTE jammed?")
   → Phase 1: LLM classifies intent → view_type="corridor", tool=fetch_expressway("CTE")
   → Phase 1: Tool fetches 9 CTE cameras from gov-data API
-  → Phase 2: 9 camera images sent to OpenAI Vision in parallel
+  → Phase 2: 9 camera images downloaded, base64-encoded, sent to Ollama qwen3.5 in parallel
   → Phase 2: Per-camera JSON analysis returned
   → Phase 2: LLM synthesizes corridor summary across all 9 analyses
   → Return { answer, view_type, cameras[] } to frontend
@@ -226,15 +228,19 @@ Each camera in the response `cameras[]` array includes an `analysis` object prod
 
 ---
 
-## 8. Cost Estimate
+## 8. Cost & Hardware
 
-Vision analysis is **on-demand only** — triggered by user queries, not background jobs.
+Vision analysis is **on-demand only** — triggered by user queries, not background jobs. Since all inference runs locally via Ollama, there are **no API costs**.
 
-| | Per call | Per day (~500 queries, avg 5 cameras) |
-|--|:--------:|:-------------------------------------:|
-| Input tokens | ~1,500 (image + prompt) | ~3.75M |
-| Output tokens | ~300 (JSON response) | ~750K |
-| Cost (Haiku) | ~$0.002 | **~$5** |
+| Consideration | Detail |
+|---|---|
+| API cost | $0 — fully local via Ollama |
+| Min recommended RAM | 8 GB (16 GB preferred for vision workloads) |
+| GPU acceleration | Optional but recommended (CUDA / Metal) for lower latency |
+| Concurrency | Phase 2 uses `asyncio.gather` — parallel vision calls share the same local Ollama process |
+| Bottleneck | Local GPU/CPU throughput; a corridor query with 9 cameras may take 10–30s without GPU |
+
+> Ensure Ollama is running (`ollama serve`) and the model is pulled: `ollama pull qwen3.5`
 
 ---
 
@@ -246,5 +252,7 @@ Vision analysis is **on-demand only** — triggered by user queries, not backgro
   - `GET /api/cameras/expressway/{code}` — cameras by expressway
   - `GET /api/cameras/nearby?lat=&lng=&radius=` — cameras by location
   - `GET /api/cameras/search?q=` — cameras by name
-- **Claude API** — LLM vision analysis (Haiku for cost efficiency)
+- **Ollama** — local LLM runtime; must be running (`ollama serve`) with `qwen3.5` pulled (`ollama pull qwen3.5`)
+  - LangChain integration: `langchain-ollama` → `ChatOllama(model="qwen3.5")`
+  - Phase 1: text + tool-calling; Phase 2: multimodal vision (base64 images)
 - **civic-frontend** — consumes this service's `/api/traffic-chat` endpoint and renders the appropriate view based on `view_type` (see `civic-frontend` → `docs/traffic-camera-ui-design.md`)

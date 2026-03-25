@@ -5,16 +5,21 @@ Phase 1 — Text-only LLM with structured output:
   Classifies view_type and decides which gov-data API to call.
 
 Phase 2 — Vision LLM (parallelised):
-  Sends each camera image to OpenAI Vision, parses structured JSON analysis,
-  then synthesises a corridor-level summary.
+  Downloads each camera image, base64-encodes it, sends to Ollama qwen3.5 vision,
+  parses structured JSON analysis, then synthesises a corridor-level summary.
 """
 
 import asyncio
+import base64
+import io
 import json
 import logging
 from typing import Any, Dict, Literal, Optional
 
+import httpx
+from PIL import Image
 from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_ollama import ChatOllama
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel
 
@@ -32,7 +37,7 @@ logger = logging.getLogger(__name__)
 
 # ─── Phase 1 structured output ───────────────────────────────────────────────
 
-ViewType = Literal["camera_map", "corridor", "camera_detail", "replay", "alerts"]
+ViewType = Literal["camera_map", "corridor", "camera_detail", "snapshot", "alerts"]
 ToolName = Literal[
     "fetch_all_cameras",
     "fetch_camera_detail",
@@ -67,7 +72,7 @@ Determine:
 camera_map    → "Show all cameras", "Which cameras are online?", general map
 corridor      → "Is CTE jammed?", "BKE cameras", any expressway corridor
 camera_detail → "Show camera 1005", specific camera ID
-replay        → "Show Woodlands at 8am", historical replay
+snapshot      → "Show Woodlands at 8am", historical snapshot
 alerts        → "Any incidents right now?", accident scanning
 
 === tools ===
@@ -105,7 +110,7 @@ Per-camera analyses:
 
 Write a concise, helpful natural-language response that directly answers the user's question."""
 
-_NEEDS_VISION: set[str] = {"corridor", "camera_detail", "replay", "alerts"}
+_NEEDS_VISION: set[str] = {"corridor", "camera_detail", "snapshot", "alerts"}
 
 
 # ─── Phase 1 ─────────────────────────────────────────────────────────────────
@@ -156,11 +161,24 @@ async def _fetch_cameras(decision: Phase1Result) -> list[CameraDetail]:
 
 async def _analyze_camera(
         camera: CameraDetail,
-        llm: ChatOpenAI,
+        llm: ChatOllama,
         expressway_code: str = "",
 ) -> CameraDetail:
-    """Send one camera image to the vision LLM and return the camera with analysis populated."""
+    """Download camera image, base64-encode it, send to Ollama vision, return camera with analysis."""
     if not camera.latestImage:
+        return camera
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            img_resp = await client.get(camera.latestImage)
+            img_resp.raise_for_status()
+        img = Image.open(io.BytesIO(img_resp.content)).convert("RGB")
+        img.thumbnail((640, 480))
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=85)
+        image_b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+    except Exception as exc:
+        logger.error("Failed to download image for camera %s: %s", camera.cameraId, exc)
         return camera
 
     prompt = _VISION_PROMPT.format(
@@ -173,7 +191,7 @@ async def _analyze_camera(
     messages = [
         HumanMessage(content=[
             {"type": "text", "text": prompt},
-            {"type": "image_url", "image_url": {"url": camera.latestImage}},
+            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}},
         ])
     ]
 
@@ -239,27 +257,15 @@ async def run_traffic_chat(user_message: str) -> Dict[str, Any]:
         )
         return {"answer": answer, "view_type": decision.view_type, "cameras": cameras}
 
-    # Phase 2: vision analysis (parallelised, semaphore-throttled) + synthesis
-    # max_retries=6 gives exponential backoff up to ~60s, enough for TPM window recovery
-    vision_llm = ChatOpenAI(model="gpt-4o-mini", temperature=0, max_retries=6)
+    # Phase 2: vision analysis (parallelised) + synthesis
+    # num_predict=256 caps output (JSON is ~100 tokens); keep_alive=-1 keeps model hot in memory
+    vision_llm = ChatOllama(model="qwen3.5", temperature=0, reasoning=False, num_predict=256, keep_alive=-1)
     expressway_code = decision.expressway_code or ""
-    sem = asyncio.Semaphore(3)
 
-    async def _bounded(cam: CameraDetail) -> CameraDetail:
-        async with sem:
-            return await _analyze_camera(cam, vision_llm, expressway_code)
+    analyzed = list(await asyncio.gather(
+        *[_analyze_camera(cam, vision_llm, expressway_code) for cam in cameras]
+    ))
 
-    analyzed = list(await asyncio.gather(*[_bounded(cam) for cam in cameras]))
-
-    for attempt in range(3):
-        try:
-            answer = await _synthesize(user_message, analyzed)
-            break
-        except Exception as exc:
-            if attempt == 2:
-                raise
-            wait = 2 ** attempt
-            logger.warning("Synthesis attempt %d failed, retrying in %ds: %s", attempt + 1, wait, exc)
-            await asyncio.sleep(wait)
+    answer = await _synthesize(user_message, analyzed)
 
     return {"answer": answer, "view_type": decision.view_type, "cameras": analyzed}
