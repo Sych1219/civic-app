@@ -1,6 +1,6 @@
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class QueryRequest(BaseModel):
@@ -20,11 +20,13 @@ class HealthResponse(BaseModel):
 
 
 class CameraAnalysis(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     congestion: str
-    vehicle_density: str
+    vehicle_density: str = Field(alias="vehicleDensity")
     incidents: str
     weather: str
-    road_surface: str
+    road_surface: str = Field(alias="roadSurface")
     summary: str
 
 

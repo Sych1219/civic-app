@@ -10,7 +10,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.agent import get_agent, get_last_raw_data
-from app.models import AnalyzeCameraRequest, AnalyzeCameraResponse, HealthResponse, QueryRequest, QueryResponse, TrafficChatRequest, TrafficChatResponse
+from app.models import AnalyzeCameraRequest, AnalyzeCameraResponse, CameraAnalysis, HealthResponse, QueryRequest, QueryResponse, TrafficChatRequest, TrafficChatResponse
 from app.traffic_agent import analyze_camera_from_url, run_traffic_chat
 
 load_dotenv()
@@ -118,6 +118,29 @@ async def traffic_chat(request: TrafficChatRequest):
     return TrafficChatResponse(**result)
 
 
+async def _persist_analysis(camera_id: str, analysis: CameraAnalysis) -> None:
+    """Fire-and-forget: push analysis to gov-data for persistence."""
+    java_api_base = os.environ.get("JAVA_BACKEND_API_URL", "http://localhost:8080")
+    payload = {
+        "congestion": analysis.congestion,
+        "vehicleDensity": analysis.vehicle_density,
+        "incidents": analysis.incidents,
+        "weather": analysis.weather,
+        "roadSurface": analysis.road_surface,
+        "summary": analysis.summary,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(
+                f"{java_api_base}/api/cameras/{camera_id}/analysis",
+                json=payload,
+            )
+            resp.raise_for_status()
+            logger.info("Persisted analysis for camera %s", camera_id)
+    except Exception as exc:
+        logger.warning("Failed to persist analysis for camera %s: %s", camera_id, exc)
+
+
 @app.post("/api/analyze-camera", response_model=AnalyzeCameraResponse)
 async def analyze_camera(request: AnalyzeCameraRequest):
     """Analyze a single camera image by URL — Phase 2 only."""
@@ -132,6 +155,9 @@ async def analyze_camera(request: AnalyzeCameraRequest):
     except Exception as exc:
         logger.error("analyze-camera failed: %s", exc, exc_info=True)
         raise HTTPException(status_code=500, detail=str(exc))
+
+    if request.camera_id:
+        await _persist_analysis(request.camera_id, analysis)
 
     return AnalyzeCameraResponse(analysis=analysis)
 
