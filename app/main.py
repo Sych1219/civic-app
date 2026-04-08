@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 import time
@@ -115,6 +116,17 @@ async def traffic_chat(request: TrafficChatRequest):
 
     elapsed_ms = int((time.monotonic() - t0) * 1000)
     logger.info("Traffic chat completed in %dms", elapsed_ms)
+
+    cameras = result.get("cameras", [])
+    asyncio.gather(
+        *[
+            _persist_analysis(str(cam.cameraId), cam.analysis)
+            for cam in cameras
+            if cam.analysis is not None
+        ],
+        return_exceptions=True,
+    )
+
     return TrafficChatResponse(**result)
 
 
