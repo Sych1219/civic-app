@@ -13,6 +13,20 @@ class QueryResponse(BaseModel):
     metadata: Optional[Dict[str, Any]] = None
 
 
+class ChatRequest(BaseModel):
+    message: str
+
+
+class Artifact(BaseModel):
+    type: str
+    data: Dict[str, Any]
+
+
+class ChatResponse(BaseModel):
+    answer: str
+    artifacts: List[Artifact] = []
+
+
 class HealthResponse(BaseModel):
     status: str
     service: str
