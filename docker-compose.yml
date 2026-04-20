@@ -6,7 +6,7 @@ services:
     env_file:
       - .env
     environment:
-      - JAVA_SPATIAL_API_URL=${JAVA_SPATIAL_API_URL:-http://host.docker.internal:8080}
+      - JAVA_BACKEND_API_URL=${JAVA_BACKEND_API_URL:-http://host.docker.internal:8080}
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]

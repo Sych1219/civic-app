@@ -7,7 +7,6 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.agent import get_agent
 from app.chat_router import route_and_execute
 from app.models import AnalyzeCameraRequest, AnalyzeCameraResponse, ChatRequest, ChatResponse
 from app.persistence import persist_analysis
@@ -24,16 +23,6 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    java_api_base = os.environ.get("JAVA_SPATIAL_API_URL", "http://localhost:8080")
-    try:
-        get_agent()
-        logger.info("Agent pre-warmed successfully.")
-    except Exception as exc:
-        logger.warning(
-            "Agent pre-warm failed (Java service at %s may not be reachable yet): %s",
-            java_api_base,
-            exc,
-        )
     yield
 
 
@@ -87,7 +76,7 @@ async def analyze_camera(request: AnalyzeCameraRequest):
 @app.get("/api/v1/snapshot/latest")
 async def snapshot_latest():
     """Return metadata about the latest taxi snapshot from the Java service."""
-    java_api_base = os.environ.get("JAVA_SPATIAL_API_URL", "http://localhost:8080")
+    java_api_base = os.environ.get("JAVA_BACKEND_API_URL", "http://localhost:8080")
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.get(f"{java_api_base}/api/v1/taxis/snapshot/latest")

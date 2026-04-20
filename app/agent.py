@@ -1,78 +1,84 @@
 import json
-import os
 import logging
-from typing import Any, Optional
+from typing import Optional
 
-import httpx
-from langchain_community.agent_toolkits.openapi import planner
-from langchain_community.agent_toolkits.openapi.spec import reduce_openapi_spec
-from langchain_community.utilities.requests import RequestsWrapper
+from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langchain_openai import ChatOpenAI
 
 from app.tools import geocode_place
+from app.taxi_tools import (
+    count_taxis_in_zone,
+    count_taxis_nearby,
+    count_taxis_near_road,
+    find_nearest_taxis,
+    get_recent_taxi_activity,
+    get_taxi_history,
+    resolve_zone,
+)
 
 logger = logging.getLogger(__name__)
 
+_TOOLS = [
+    resolve_zone,
+    count_taxis_in_zone,
+    count_taxis_nearby,
+    count_taxis_near_road,
+    find_nearest_taxis,
+    get_taxi_history,
+    get_recent_taxi_activity,
+    geocode_place,
+]
 
-class CapturingRequestsWrapper(RequestsWrapper):
-    """RequestsWrapper that records the last raw HTTP response text."""
+_TOOL_MAP = {t.name: t for t in _TOOLS}
 
-    last_raw_response: Optional[str] = None
+_SYSTEM = """\
+You are a taxi availability assistant for Singapore.
+Always call a tool to get real data — never invent taxi counts.
 
-    def get(self, url: str, **kwargs: Any) -> str:
-        response = super().get(url, **kwargs)
-        self.last_raw_response = response
-        return response
-
-    def post(self, url: str, data: Any, **kwargs: Any) -> str:
-        response = super().post(url, data, **kwargs)
-        self.last_raw_response = response
-        return response
-
-
-_agent = None
-_capturing_wrapper: Optional[CapturingRequestsWrapper] = None
+Tool selection guide:
+- Named zone/district (Punggol, CBD, Changi, Tampines…) → count_taxis_in_zone
+- Place name needing coordinates → geocode_place first, then count_taxis_nearby
+- Road or expressway (PIE, CTE, AYE, Orchard Road…) → count_taxis_near_road
+- Nearest taxi to a location → geocode_place first, then find_nearest_taxis
+- Historical or trend question → get_taxi_history or get_recent_taxi_activity
+- Unsure about a zone name → resolve_zone first\
+"""
 
 
-def _build_agent(java_api_base: str):
-    global _capturing_wrapper
-
-    raw_spec = httpx.get(f"{java_api_base}/api-docs", timeout=10.0).json()
-    api_spec = reduce_openapi_spec(raw_spec)
-
+async def run_taxi_agent(message: str) -> tuple[str, Optional[dict]]:
+    """Run the tools-based taxi agent. Returns (answer, raw_data)."""
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
-    _capturing_wrapper = CapturingRequestsWrapper(headers={"Accept": "application/json"})
+    llm_with_tools = llm.bind_tools(_TOOLS)
 
-    return planner.create_openapi_agent(
-        api_spec,
-        _capturing_wrapper,
-        llm,
-        extra_tools=[geocode_place],
-        agent_executor_kwargs={"handle_parsing_errors": True},
-        allow_dangerous_requests=True,
-        verbose=True,
-    )
+    messages = [
+        SystemMessage(content=_SYSTEM),
+        HumanMessage(content=message),
+    ]
 
+    last_tool_result: Optional[dict] = None
 
-def get_agent():
-    """Lazily initialise and return the singleton OpenAPI agent."""
-    global _agent
-    if _agent is None:
-        java_api_base = os.environ.get("JAVA_SPATIAL_API_URL", "http://localhost:8080")
-        logger.info("Initialising OpenAPI agent against %s", java_api_base)
-        _agent = _build_agent(java_api_base)
-        logger.info("Agent ready.")
-    return _agent
+    for _ in range(5):
+        response = await llm_with_tools.ainvoke(messages)
+        messages.append(response)
 
+        if not response.tool_calls:
+            return response.content, last_tool_result
 
-def get_last_raw_data() -> Optional[dict]:
-    """Return the Java service data payload from the most recent HTTP call (envelope stripped)."""
-    if _capturing_wrapper is None or _capturing_wrapper.last_raw_response is None:
-        return None
-    try:
-        parsed = json.loads(_capturing_wrapper.last_raw_response)
-        if isinstance(parsed, dict) and "data" in parsed:
-            return parsed["data"]
-        return parsed
-    except (json.JSONDecodeError, ValueError):
-        return None
+        for tc in response.tool_calls:
+            tool_fn = _TOOL_MAP.get(tc["name"])
+            if tool_fn is None:
+                result_str = f"Unknown tool: {tc['name']}"
+            else:
+                try:
+                    result_str = await tool_fn.ainvoke(tc["args"])
+                    try:
+                        last_tool_result = json.loads(result_str)
+                    except (json.JSONDecodeError, ValueError):
+                        pass
+                except Exception as exc:
+                    result_str = f"Tool error: {exc}"
+                    logger.warning("Tool %s failed: %s", tc["name"], exc)
+
+            messages.append(ToolMessage(content=result_str, tool_call_id=tc["id"]))
+
+    return messages[-1].content if hasattr(messages[-1], "content") else "", last_tool_result

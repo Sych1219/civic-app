@@ -48,17 +48,11 @@ async def _classify_domain(message: str) -> DomainType:
 # ─── Domain handlers ──────────────────────────────────────────────────────────
 
 async def _handle_taxi(message: str) -> tuple[str, Artifact]:
-    from app.agent import get_agent, get_last_raw_data
+    from app.agent import run_taxi_agent
     try:
-        agent = get_agent()
+        answer, data = await run_taxi_agent(message)
     except Exception as exc:
-        raise RuntimeError(
-            f"Agent unavailable — Java service may not be running: {exc}"
-        ) from exc
-
-    result = await agent.ainvoke({"input": message})
-    answer = result.get("output", "")
-    data = get_last_raw_data()
+        raise RuntimeError(f"Taxi agent failed: {exc}") from exc
     return answer, Artifact(type="taxi_data", data={"raw": data})
 
 
