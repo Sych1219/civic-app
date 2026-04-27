@@ -5,8 +5,8 @@ from typing import Optional
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langchain_openai import ChatOpenAI
 
-from app.tools import geocode_place
-from app.taxi_tools import (
+from app.services.geocoding import geocode_place
+from app.domains.taxi.tools import (
     count_taxis_in_zone,
     count_taxis_nearby,
     count_taxis_near_road,

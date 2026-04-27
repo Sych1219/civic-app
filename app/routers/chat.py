@@ -18,7 +18,7 @@ from langchain_openai import ChatOpenAI
 from pydantic import BaseModel
 
 from app.models import Artifact, ChatResponse, CameraDetail
-from app.persistence import persist_analysis
+from app.services.persistence import persist_analysis
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +48,7 @@ async def _classify_domain(message: str) -> DomainType:
 # ─── Domain handlers ──────────────────────────────────────────────────────────
 
 async def _handle_taxi(message: str) -> tuple[str, Artifact]:
-    from app.agent import run_taxi_agent
+    from app.domains.taxi.agent import run_taxi_agent
     try:
         answer, data = await run_taxi_agent(message)
     except Exception as exc:
@@ -75,7 +75,7 @@ async def _handle_traffic_cameras(message: str) -> tuple[str, Artifact]:
             data={"view_type": mock["view_type"], "cameras": mock["cameras"]},
         )
 
-    from app.traffic_agent import run_traffic_chat
+    from app.domains.traffic.camera_pipeline import run_traffic_chat
     result = await run_traffic_chat(message)
     cameras: list[CameraDetail] = result.get("cameras", [])
 

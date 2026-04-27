@@ -23,8 +23,8 @@ from langchain_openai import ChatOpenAI
 from pydantic import BaseModel
 
 from app.models import CameraAnalysis, CameraDetail
-from app.tools import geocode_place
-from app.traffic_tools import (
+from app.services.geocoding import geocode_place
+from app.domains.traffic.tools import (
     fetch_all_cameras,
     fetch_camera_detail,
     fetch_expressway,
@@ -196,7 +196,7 @@ async def _analyze_camera(
 
     try:
         structured_llm = llm.with_structured_output(CameraAnalysis)
-        analysis:CameraAnalysis = await structured_llm.ainvoke(messages)
+        analysis: CameraAnalysis = await structured_llm.ainvoke(messages)
 
     except Exception as exc:
         logger.error("Vision analysis failed for camera %s: %s", camera.cameraId, exc)

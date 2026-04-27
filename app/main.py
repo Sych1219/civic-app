@@ -7,10 +7,10 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.chat_router import route_and_execute
+from app.routers.chat import route_and_execute
 from app.models import AnalyzeCameraRequest, AnalyzeCameraResponse, ChatRequest, ChatResponse
-from app.persistence import persist_analysis
-from app.traffic_agent import analyze_camera_from_url
+from app.services.persistence import persist_analysis
+from app.domains.traffic.camera_pipeline import analyze_camera_from_url
 
 load_dotenv()
 
