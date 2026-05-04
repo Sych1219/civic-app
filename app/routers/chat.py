@@ -1,17 +1,17 @@
 """
-Unified chat router — classifies the user message, dispatches to the right
-domain handler, and returns a ChatResponse with typed artifacts.
+Unified chat router — uses a Planner to decompose user queries into subtasks,
+dispatches each to the right domain subagent in parallel, then synthesizes.
 
 Adding a new domain:
   1. Write an async handler: async def _handle_X(msg) -> tuple[str, Artifact]
-  2. Register it: _HANDLERS["X"] = _handle_X
-  3. Add "X" to _CLASSIFY_SYSTEM so the LLM knows it exists.
+  2. Register it in _AGENTS with a clear description
 """
 
 import asyncio
 import logging
 import os
-from typing import Literal
+from dataclasses import dataclass
+from typing import Callable
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
@@ -22,27 +22,23 @@ from app.services.persistence import persist_analysis
 
 logger = logging.getLogger(__name__)
 
-# ─── Domain classification ────────────────────────────────────────────────────
+# ─── Plan types ───────────────────────────────────────────────────────────────
 
-DomainType = Literal["taxi", "traffic-cameras"]
-
-_CLASSIFY_SYSTEM = """Classify the user's query into exactly one domain:
-- taxi: taxi availability, taxi counts, taxis near a location
-- traffic-cameras: traffic cameras, road conditions, congestion, expressway status"""
+class SubTask(BaseModel):
+    agent: str
+    question: str
 
 
-class _DomainClassification(BaseModel):
-    domain: DomainType
+class Plan(BaseModel):
+    tasks: list[SubTask]
 
 
-async def _classify_domain(message: str) -> DomainType:
-    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
-    structured = llm.with_structured_output(_DomainClassification)
-    result = await structured.ainvoke([
-        SystemMessage(content=_CLASSIFY_SYSTEM),
-        HumanMessage(content=message),
-    ])
-    return result.domain
+# ─── Agent registry ───────────────────────────────────────────────────────────
+
+@dataclass
+class AgentDef:
+    description: str
+    handler: Callable
 
 
 # ─── Domain handlers ──────────────────────────────────────────────────────────
@@ -99,16 +95,83 @@ async def _handle_traffic_cameras(message: str) -> tuple[str, Artifact]:
 
 # ─── Registry (add new domains here) ─────────────────────────────────────────
 
-_HANDLERS = {
-    "taxi": _handle_taxi,
-    "traffic-cameras": _handle_traffic_cameras,
+_AGENTS: dict[str, AgentDef] = {
+    "taxi": AgentDef(
+        description="taxi availability, counts, distribution, hotspots, historical trends by zone or location",
+        handler=_handle_taxi,
+    ),
+    "traffic-cameras": AgentDef(
+        description="traffic cameras, road conditions, congestion levels, expressway status, incidents",
+        handler=_handle_traffic_cameras,
+    ),
 }
+
+# ─── Planner ──────────────────────────────────────────────────────────────────
+
+async def _plan(message: str) -> Plan:
+    descriptions = "\n".join(
+        f"- {name}: {defn.description}" for name, defn in _AGENTS.items()
+    )
+    system = f"""You are a query planner. Decompose the user's question into subtasks.
+For each subtask, pick the most relevant agent and write a focused sub-question tailored to that agent.
+Only include agents that are genuinely needed to answer the question.
+
+Available agents:
+{descriptions}"""
+
+    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+    structured = llm.with_structured_output(Plan)
+    return await structured.ainvoke([
+        SystemMessage(content=system),
+        HumanMessage(content=message),
+    ])
+
+
+# ─── Executor ─────────────────────────────────────────────────────────────────
+
+async def _execute(plan: Plan) -> list[tuple[str, str, Artifact]]:
+    """Run all subtasks in parallel. Returns list of (agent_name, answer, artifact)."""
+    async def run_one(task: SubTask) -> tuple[str, str, Artifact]:
+        agent_def = _AGENTS.get(task.agent)
+        if agent_def is None:
+            logger.warning("Planner requested unknown agent '%s', skipping", task.agent)
+            return task.agent, f"No agent available for '{task.agent}'.", Artifact(type="error", data={})
+        answer, artifact = await agent_def.handler(task.question)
+        return task.agent, answer, artifact
+
+    return list(await asyncio.gather(*[run_one(t) for t in plan.tasks]))
+
+
+# ─── Synthesizer ──────────────────────────────────────────────────────────────
+
+async def _synthesize(original_question: str, results: list[tuple[str, str, Artifact]]) -> str:
+    if len(results) == 1:
+        return results[0][1]
+
+    parts = "\n\n".join(
+        f"[{agent}]\n{answer}" for agent, answer, _ in results
+    )
+    system = (
+        "You are a synthesis assistant. Combine the following domain-specific answers "
+        "into one coherent, concise response that directly addresses the user's original question. "
+        "Highlight any correlations or insights that span multiple domains."
+    )
+    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+    response = await llm.ainvoke([
+        SystemMessage(content=system),
+        HumanMessage(content=f"Original question: {original_question}\n\n{parts}"),
+    ])
+    return response.content
 
 
 # ─── Public entry point ───────────────────────────────────────────────────────
 
 async def route_and_execute(message: str) -> ChatResponse:
-    domain = await _classify_domain(message)
-    logger.info("Classified domain: %s", domain)
-    answer, artifact = await _HANDLERS[domain](message)
-    return ChatResponse(answer=answer, artifacts=[artifact])
+    plan = await _plan(message)
+    logger.info("Plan: %s", [(t.agent, t.question) for t in plan.tasks])
+
+    results = await _execute(plan)
+    answer = await _synthesize(message, results)
+
+    artifacts = [artifact for _, _, artifact in results]
+    return ChatResponse(answer=answer, artifacts=artifacts)
