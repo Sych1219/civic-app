@@ -40,9 +40,20 @@ app.add_middleware(
 )
 
 
+def _load_mock_chat_response() -> ChatResponse:
+    mock_path = os.path.join(os.path.dirname(__file__), "mock_chat_response.json")
+    with open(mock_path, encoding="utf-8") as f:
+        return ChatResponse.model_validate_json(f.read())
+
+_MOCK_CHAT_RESPONSE = _load_mock_chat_response()
+
+
 @app.post("/api/v1/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     """Natural language query — routes to the appropriate domain agent."""
+    if os.environ.get("MOCK_CHAT", "").lower() == "true":
+        logger.info("MOCK_CHAT enabled — returning hardcoded response")
+        return _MOCK_CHAT_RESPONSE
     try:
         return await route_and_execute(request.message)
     except RuntimeError as exc:

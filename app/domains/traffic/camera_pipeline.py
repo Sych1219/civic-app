@@ -14,6 +14,7 @@ import base64
 import io
 import json
 import logging
+import time
 from typing import Any, Dict, Literal, Optional
 
 import httpx
@@ -33,6 +34,56 @@ from app.domains.traffic.tools import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+# ─── Rate limiter (token bucket) ─────────────────────────────────────────────
+
+class _RateLimiter:
+    """Token-bucket rate limiter: at most `rate` calls per `period` seconds."""
+
+    def __init__(self, rate: int, period: float = 60.0) -> None:
+        self._rate = rate
+        self._period = period
+        self._tokens = float(rate)
+        self._last_refill = time.monotonic()
+        self._lock = asyncio.Lock()
+
+    async def acquire(self) -> None:
+        async with self._lock:
+            now = time.monotonic()
+            elapsed = now - self._last_refill
+            self._tokens = min(
+                self._rate,
+                self._tokens + elapsed * (self._rate / self._period),
+            )
+            self._last_refill = now
+            if self._tokens < 1:
+                wait = (1 - self._tokens) / (self._rate / self._period)
+                await asyncio.sleep(wait)
+                self._tokens = 0.0
+            else:
+                self._tokens -= 1
+
+
+# 20 vision calls per minute — well within gpt-4o-mini's default RPM tier.
+_vision_limiter = _RateLimiter(rate=20, period=60.0)
+
+
+# ─── Exponential backoff wrapper ──────────────────────────────────────────────
+
+async def _with_backoff(coro_fn, *, retries: int = 4, base_delay: float = 1.0):
+    """Call coro_fn(), retrying on 429/rate-limit errors with exponential backoff."""
+    for attempt in range(retries + 1):
+        try:
+            return await coro_fn()
+        except Exception as exc:
+            is_rate_limit = "429" in str(exc) or "rate limit" in str(exc).lower()
+            if not is_rate_limit or attempt == retries:
+                raise
+            delay = base_delay * (2 ** attempt)
+            logger.warning("Rate limit hit, retrying in %.1fs (attempt %d/%d)", delay, attempt + 1, retries)
+            await asyncio.sleep(delay)
+
 
 # ─── Phase 1 structured output ───────────────────────────────────────────────
 
@@ -196,7 +247,9 @@ async def _analyze_camera(
 
     try:
         structured_llm = llm.with_structured_output(CameraAnalysis)
-        analysis: CameraAnalysis = await structured_llm.ainvoke(messages)
+        analysis: CameraAnalysis = await _with_backoff(
+            lambda: structured_llm.ainvoke(messages)
+        )
 
     except Exception as exc:
         logger.error("Vision analysis failed for camera %s: %s", camera.cameraId, exc)
@@ -301,8 +354,12 @@ async def run_traffic_chat(user_message: str) -> Dict[str, Any]:
     # vision_llm = ChatOllama(model="qwen3.5", temperature=0, reasoning=False, num_predict=256, keep_alive=-1)
     expressway_code = decision.expressway_code or ""
 
+    async def _analyze_with_limit(cam: CameraDetail) -> CameraDetail:
+        await _vision_limiter.acquire()
+        return await _analyze_camera(cam, vision_llm, expressway_code)
+
     analyzed = list(await asyncio.gather(
-        *[_analyze_camera(cam, vision_llm, expressway_code) for cam in cameras]
+        *[_analyze_with_limit(cam) for cam in cameras]
     ))
 
     answer = await _synthesize(user_message, analyzed)
