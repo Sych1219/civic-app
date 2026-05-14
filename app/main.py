@@ -18,6 +18,15 @@ logging.basicConfig(
     level=os.environ.get("LOG_LEVEL", "INFO").upper(),
     format="%(asctime)s %(levelname)s %(name)s — %(message)s",
 )
+
+# Trace logger: clean single-line format so thinking steps are easy to read.
+_trace_handler = logging.StreamHandler()
+_trace_handler.setFormatter(logging.Formatter("%(message)s"))
+_trace_logger = logging.getLogger("trace")
+_trace_logger.addHandler(_trace_handler)
+_trace_logger.setLevel(logging.INFO)
+_trace_logger.propagate = False  # don't double-print through root logger
+
 logger = logging.getLogger(__name__)
 
 

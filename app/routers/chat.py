@@ -10,6 +10,7 @@ Adding a new domain:
 import asyncio
 import logging
 import os
+import time
 from dataclasses import dataclass
 from typing import Callable
 
@@ -21,6 +22,15 @@ from app.models import Artifact, ChatResponse, CameraDetail
 from app.services.persistence import persist_analysis
 
 logger = logging.getLogger(__name__)
+trace = logging.getLogger("trace")
+
+
+def _sep(label: str = "", width: int = 60) -> None:
+    if label:
+        pad = width - len(label) - 4
+        trace.info("┌── %s %s", label, "─" * max(pad, 0))
+    else:
+        trace.info("└%s", "─" * (width - 1))
 
 # ─── Plan types ───────────────────────────────────────────────────────────────
 
@@ -115,28 +125,52 @@ async def _plan(message: str) -> Plan:
     system = f"""You are a query planner. Decompose the user's question into subtasks.
 For each subtask, pick the most relevant agent and write a focused sub-question tailored to that agent.
 Only include agents that are genuinely needed to answer the question.
+Use at most ONE subtask per agent — do not split a single agent's work into multiple subtasks.
+If the question can be answered by one agent, produce exactly one subtask.
 
 Available agents:
 {descriptions}"""
 
+    _sep("PLANNER")
+    trace.info("│ User query : %s", message)
+    trace.info("│ Available agents: %s", list(_AGENTS.keys()))
+    trace.info("│ Calling LLM to decompose query into subtasks...")
+    _sep()
+
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
     structured = llm.with_structured_output(Plan)
-    return await structured.ainvoke([
+    plan = await structured.ainvoke([
         SystemMessage(content=system),
         HumanMessage(content=message),
     ])
+
+    _sep("PLAN RESULT")
+    for i, task in enumerate(plan.tasks, 1):
+        trace.info("│  Task %d → agent=%-20s question=%s", i, f'"{task.agent}"', task.question)
+    _sep()
+    return plan
 
 
 # ─── Executor ─────────────────────────────────────────────────────────────────
 
 async def _execute(plan: Plan) -> list[tuple[str, str, Artifact]]:
     """Run all subtasks in parallel. Returns list of (agent_name, answer, artifact)."""
+    _sep("EXECUTOR")
+    trace.info("│ Dispatching %d task(s) in parallel:", len(plan.tasks))
+    for t in plan.tasks:
+        trace.info("│   → [%s] %s", t.agent, t.question)
+    _sep()
+
     async def run_one(task: SubTask) -> tuple[str, str, Artifact]:
         agent_def = _AGENTS.get(task.agent)
         if agent_def is None:
             logger.warning("Planner requested unknown agent '%s', skipping", task.agent)
+            trace.info("[%s] ✗ Unknown agent — skipping", task.agent)
             return task.agent, f"No agent available for '{task.agent}'.", Artifact(type="error", data={})
+        t0 = time.monotonic()
         answer, artifact = await agent_def.handler(task.question)
+        elapsed = time.monotonic() - t0
+        trace.info("[%s] ✓ Done in %.2fs", task.agent, elapsed)
         return task.agent, answer, artifact
 
     return list(await asyncio.gather(*[run_one(t) for t in plan.tasks]))
@@ -145,8 +179,17 @@ async def _execute(plan: Plan) -> list[tuple[str, str, Artifact]]:
 # ─── Synthesizer ──────────────────────────────────────────────────────────────
 
 async def _synthesize(original_question: str, results: list[tuple[str, str, Artifact]]) -> str:
+    _sep("SYNTHESIZER")
     if len(results) == 1:
+        trace.info("│ Single result — no synthesis needed, returning directly.")
+        _sep()
         return results[0][1]
+
+    trace.info("│ Combining %d domain answers into one response:", len(results))
+    for agent, answer, _ in results:
+        preview = answer[:120].replace("\n", " ")
+        trace.info("│   [%s] %s%s", agent, preview, "…" if len(answer) > 120 else "")
+    _sep()
 
     parts = "\n\n".join(
         f"[{agent}]\n{answer}" for agent, answer, _ in results
@@ -167,11 +210,20 @@ async def _synthesize(original_question: str, results: list[tuple[str, str, Arti
 # ─── Public entry point ───────────────────────────────────────────────────────
 
 async def route_and_execute(message: str) -> ChatResponse:
-    plan = await _plan(message)
-    logger.info("Plan: %s", [(t.agent, t.question) for t in plan.tasks])
+    t_start = time.monotonic()
+    _sep("REQUEST START", width=60)
+    trace.info("│ %s", message)
+    _sep()
 
+    plan = await _plan(message)
     results = await _execute(plan)
     answer = await _synthesize(message, results)
+
+    elapsed = time.monotonic() - t_start
+    _sep("FINAL ANSWER")
+    trace.info("│ %s", answer[:200].replace("\n", " "))
+    trace.info("│ Total time: %.2fs", elapsed)
+    _sep()
 
     artifacts = [artifact for _, _, artifact in results]
     return ChatResponse(answer=answer, artifacts=artifacts)
