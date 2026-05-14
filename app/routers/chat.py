@@ -56,10 +56,10 @@ class AgentDef:
 async def _handle_taxi(message: str) -> tuple[str, Artifact]:
     from app.domains.taxi.agent import run_taxi_agent
     try:
-        answer, data = await run_taxi_agent(message)
+        answer, raw, locations = await run_taxi_agent(message)
     except Exception as exc:
         raise RuntimeError(f"Taxi agent failed: {exc}") from exc
-    return answer, Artifact(type="taxi_data", data={"raw": data})
+    return answer, Artifact(type="taxi_data", data={"raw": raw, "locations": locations})
 
 
 _MOCK_TRAFFIC_RESPONSE = {
