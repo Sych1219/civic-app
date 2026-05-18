@@ -1,17 +1,25 @@
 import json
+from typing import Optional
 
 import numpy as np
 from openai import AsyncOpenAI
 
-_client = AsyncOpenAI()
+_client: Optional[AsyncOpenAI] = None
 _MODEL = "text-embedding-3-small"
 
 SIMILARITY_THRESHOLD = 0.75
 TOP_K_HINTS = 5
 
 
+def _get_client() -> AsyncOpenAI:
+    global _client
+    if _client is None:
+        _client = AsyncOpenAI()
+    return _client
+
+
 async def embed(text: str) -> list[float]:
-    resp = await _client.embeddings.create(input=text, model=_MODEL)
+    resp = await _get_client().embeddings.create(input=text, model=_MODEL)
     return resp.data[0].embedding
 
 

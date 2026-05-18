@@ -15,6 +15,7 @@ import io
 import json
 import logging
 import time
+import uuid
 from typing import Any, Dict, Literal, Optional
 
 import httpx
@@ -32,8 +33,16 @@ from app.domains.traffic.tools import (
     fetch_nearby,
     search_cameras,
 )
+from app.memory.client import MemoryClient
+from app.memory.events import EventCollector, EventType
+from app.memory.injector import build_hint_block
+from app.memory.pipeline import post_request_pipeline
+from app.memory.registry import HintRegistry
 
 logger = logging.getLogger(__name__)
+
+_mem_client = MemoryClient()
+_registry   = HintRegistry(_mem_client)
 
 
 # ─── Rate limiter (token bucket) ─────────────────────────────────────────────
@@ -165,46 +174,53 @@ _NEEDS_VISION: set[str] = {"corridor", "camera_detail", "snapshot", "alerts"}
 
 # ─── Phase 1 ─────────────────────────────────────────────────────────────────
 
-async def _classify(user_message: str) -> Phase1Result:
+async def _classify(user_message: str, hints: list[str]) -> Phase1Result:
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
     structured = llm.with_structured_output(Phase1Result)
     messages = [
-        SystemMessage(content=_PHASE1_SYSTEM),
+        SystemMessage(content=_PHASE1_SYSTEM + build_hint_block(hints)),
         HumanMessage(content=user_message),
     ]
     return await structured.ainvoke(messages)
 
 
-async def _fetch_cameras(decision: Phase1Result) -> list[CameraDetail]:
+async def _fetch_cameras(
+    decision: Phase1Result,
+    collector: EventCollector,
+) -> list[CameraDetail]:
     tool = decision.tool
+    collector.emit(EventType.TOOL_CALL, 1, tool=tool, args=decision.model_dump())
 
-    if tool == "fetch_all_cameras":
-        return await fetch_all_cameras()
+    cameras: list[CameraDetail] = []
+    try:
+        if tool == "fetch_all_cameras":
+            cameras = await fetch_all_cameras()
+        elif tool == "fetch_camera_detail":
+            cameras = [await fetch_camera_detail(decision.camera_id)]
+        elif tool == "fetch_expressway":
+            cameras = await fetch_expressway(decision.expressway_code)
+        elif tool == "fetch_nearby":
+            lat, lng = decision.lat, decision.lng
+            if (lat is None or lng is None) and decision.place_name:
+                geo = geocode_place.invoke(decision.place_name)
+                try:
+                    after_lat = geo.split("lat=")[1]
+                    lat_str, lng_str = after_lat.split(", lng=")
+                    lat, lng = float(lat_str), float(lng_str)
+                except (IndexError, ValueError):
+                    logger.error("Geocoding failed: %s", geo)
+            cameras = await fetch_nearby(lat, lng, decision.radius)
+        elif tool == "search_cameras":
+            cameras = await search_cameras(decision.search_query)
 
-    if tool == "fetch_camera_detail":
-        return [await fetch_camera_detail(decision.camera_id)]
+        success = len(cameras) > 0
+        collector.emit(EventType.TOOL_RESULT, 1, tool=tool, success=success,
+                       error=None if success else "No cameras found")
+    except Exception as exc:
+        collector.emit(EventType.TOOL_RESULT, 1, tool=tool, success=False, error=str(exc))
+        raise
 
-    if tool == "fetch_expressway":
-        return await fetch_expressway(decision.expressway_code)
-
-    if tool == "fetch_nearby":
-        lat, lng = decision.lat, decision.lng
-        if (lat is None or lng is None) and decision.place_name:
-            geo = geocode_place.invoke(decision.place_name)
-            # geo format: "place_name: lat=X, lng=Y"
-            try:
-                after_lat = geo.split("lat=")[1]
-                lat_str, lng_str = after_lat.split(", lng=")
-                lat, lng = float(lat_str), float(lng_str)
-            except (IndexError, ValueError):
-                logger.error("Geocoding failed: %s", geo)
-                return []
-        return await fetch_nearby(lat, lng, decision.radius)
-
-    if tool == "search_cameras":
-        return await search_cameras(decision.search_query)
-
-    return []
+    return cameras
 
 
 # ─── Phase 2 ─────────────────────────────────────────────────────────────────
@@ -213,6 +229,7 @@ async def _analyze_camera(
         camera: CameraDetail,
         llm: ChatOpenAI,
         expressway_code: str = "",
+        collector: Optional[EventCollector] = None,
 ) -> CameraDetail:
     """Download camera image, base64-encode it, send to Ollama vision, return camera with analysis."""
     if not camera.latestImage:
@@ -245,14 +262,22 @@ async def _analyze_camera(
         ])
     ]
 
+    if collector:
+        collector.emit(EventType.TOOL_CALL, 2, tool="analyze_camera",
+                       args={"camera_id": camera.cameraId})
     try:
         structured_llm = llm.with_structured_output(CameraAnalysis)
         analysis: CameraAnalysis = await _with_backoff(
             lambda: structured_llm.ainvoke(messages)
         )
-
+        if collector:
+            collector.emit(EventType.TOOL_RESULT, 2, tool="analyze_camera",
+                           success=True, error=None)
     except Exception as exc:
         logger.error("Vision analysis failed for camera %s: %s", camera.cameraId, exc)
+        if collector:
+            collector.emit(EventType.TOOL_RESULT, 2, tool="analyze_camera",
+                           success=False, error=str(exc))
         analysis = CameraAnalysis(
             congestion="unknown",
             vehicle_density="unknown",
@@ -329,18 +354,42 @@ async def analyze_camera_from_url(
 
 # ─── Public entry point ───────────────────────────────────────────────────────
 
-async def run_traffic_chat(user_message: str) -> Dict[str, Any]:
+async def run_traffic_chat(
+    user_message: str,
+    request_id: str | None = None,
+) -> Dict[str, Any]:
     """Run the two-phase traffic chat pipeline and return the response dict."""
+    request_id = request_id or str(uuid.uuid4())
 
+    hints_injected = await _registry.get_active_hints("camera", user_message)
+    collector = EventCollector(request_id=request_id, agent="camera")
+
+    try:
+        result = await _run_pipeline(user_message, hints_injected, collector)
+    finally:
+        asyncio.create_task(post_request_pipeline(
+            request_id, "camera", user_message,
+            collector, hints_injected, _registry, _mem_client,
+        ))
+
+    return result
+
+
+async def _run_pipeline(
+    user_message: str,
+    hints: list[str],
+    collector: EventCollector,
+) -> Dict[str, Any]:
     # Phase 1: classify + fetch
-    decision: Phase1Result = await _classify(user_message)
+    decision: Phase1Result = await _classify(user_message, hints)
     logger.info("Phase 1 → view_type=%s  tool=%s", decision.view_type, decision.tool)
 
-    cameras = await _fetch_cameras(decision)
+    cameras = await _fetch_cameras(decision, collector)
     logger.info("Fetched %d cameras", len(cameras))
 
     # Skip Phase 2 when vision is not needed or there are no cameras
     if decision.view_type not in _NEEDS_VISION or not cameras:
+        collector.emit(EventType.FINAL_ANSWER, 1, iterations_used=1)
         answer = (
             f"Showing {len(cameras)} cameras."
             if cameras
@@ -356,12 +405,13 @@ async def run_traffic_chat(user_message: str) -> Dict[str, Any]:
 
     async def _analyze_with_limit(cam: CameraDetail) -> CameraDetail:
         await _vision_limiter.acquire()
-        return await _analyze_camera(cam, vision_llm, expressway_code)
+        return await _analyze_camera(cam, vision_llm, expressway_code, collector)
 
     analyzed = list(await asyncio.gather(
         *[_analyze_with_limit(cam) for cam in cameras]
     ))
 
     answer = await _synthesize(user_message, analyzed)
+    collector.emit(EventType.FINAL_ANSWER, 2, iterations_used=2)
 
     return {"answer": answer, "view_type": decision.view_type, "cameras": analyzed}
