@@ -1,5 +1,7 @@
+import asyncio
 import json
 import logging
+import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
@@ -17,12 +19,21 @@ from app.domains.taxi.tools import (
     get_taxi_history,
     resolve_zone,
 )
+from app.memory.client import MemoryClient
+from app.memory.events import EventCollector, EventType, collector_var
+from app.memory.injector import build_hint_block
+from app.memory.pipeline import post_request_pipeline
+from app.memory.registry import HintRegistry
 
 logger = logging.getLogger(__name__)
 trace = logging.getLogger("trace")
 
 _RESULT_PREVIEW_LEN = 200
 _SGT = timezone(timedelta(hours=8))
+
+# Module-level singletons — initialised once at import time
+_mem_client = MemoryClient()
+_registry   = HintRegistry(_mem_client)
 
 
 def _preview(s: str) -> str:
@@ -44,9 +55,9 @@ _TOOLS = [
 _TOOL_MAP = {t.name: t for t in _TOOLS}
 
 
-def _build_system_prompt() -> str:
+def _build_system_prompt(hints: list[str]) -> str:
     now_sgt = datetime.now(_SGT)
-    return f"""\
+    base = f"""\
 You are a taxi availability assistant for Singapore.
 Always call a tool to get real data — never invent taxi counts.
 
@@ -61,9 +72,13 @@ Tool selection guide:
 - Historical or trend question → get_taxi_history or get_recent_taxi_activity
 - Unsure about a zone name → resolve_zone first\
 """
+    return base + build_hint_block(hints)
 
 
-async def run_taxi_agent(message: str) -> tuple[str, Optional[dict], dict[str, dict]]:
+async def run_taxi_agent(
+    message: str,
+    request_id: str | None = None,
+) -> tuple[str, Optional[dict], dict[str, dict]]:
     """Run the tools-based taxi agent.
 
     Returns:
@@ -71,38 +86,66 @@ async def run_taxi_agent(message: str) -> tuple[str, Optional[dict], dict[str, d
         last_raw:  Last tool result as a dict (locations already offloaded).
         locations: Mapping of ref_id → GeoJsonFeatureCollection dict for all tool calls.
     """
+    request_id = request_id or str(uuid.uuid4())
+
     trace.info("[taxi] Sub-question: %s", message)
     trace.info("[taxi] Available tools: %s", [t.name for t in _TOOLS])
 
-    store = LocationStore()
-    token = location_store_var.set(store)
+    hints_injected = await _registry.get_active_hints("taxi", message)
+
+    store    = LocationStore()
+    ls_tok   = location_store_var.set(store)
+
+    collector = EventCollector(request_id=request_id, agent="taxi")
+    coll_tok  = collector_var.set(collector)
 
     try:
-        return await _run(message, store)
+        answer, last_raw, locations = await _run(message, store, hints_injected)
     finally:
-        location_store_var.reset(token)
+        location_store_var.reset(ls_tok)
+        collector_var.reset(coll_tok)
+        asyncio.create_task(post_request_pipeline(
+            request_id, "taxi", message,
+            collector, hints_injected, _registry, _mem_client,
+        ))
+
+    return answer, last_raw, locations
 
 
-async def _run(message: str, store: LocationStore) -> tuple[str, Optional[dict], dict[str, dict]]:
+async def _run(
+    message: str,
+    store: LocationStore,
+    hints: list[str],
+) -> tuple[str, Optional[dict], dict[str, dict]]:
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
     llm_with_tools = llm.bind_tools(_TOOLS)
 
     messages = [
-        SystemMessage(content=_build_system_prompt()),
+        SystemMessage(content=_build_system_prompt(hints)),
         HumanMessage(content=message),
     ]
 
     last_raw: Optional[dict] = None
     max_iters = 5
+    collector = collector_var.get()
 
     for iteration in range(1, max_iters + 1):
         trace.info("[taxi] ── Iteration %d/%d: calling LLM...", iteration, max_iters)
         response = await llm_with_tools.ainvoke(messages)
         messages.append(response)
 
+        if collector:
+            collector.emit(EventType.LLM_DECISION, iteration,
+                has_tool_calls=bool(response.tool_calls),
+                tools=[tc["name"] for tc in response.tool_calls],
+            )
+
         if not response.tool_calls:
             trace.info("[taxi] ── LLM decision: no tool calls → generating final answer")
             trace.info("[taxi] ── Answer: %s", _preview(response.content))
+            if collector:
+                collector.emit(EventType.FINAL_ANSWER, iteration,
+                    iterations_used=iteration)
             return response.content, last_raw, store.collect()
 
         trace.info(
@@ -116,14 +159,19 @@ async def _run(message: str, store: LocationStore) -> tuple[str, Optional[dict],
             args_str = json.dumps(tc["args"], ensure_ascii=False)
             trace.info("[taxi]    ▶ %s(%s)", tc["name"], args_str)
 
+            if collector:
+                collector.emit(EventType.TOOL_CALL, iteration,
+                    tool=tc["name"], args=tc["args"])
+
             if tool_fn is None:
                 llm_content = f"Unknown tool: {tc['name']}"
                 trace.info("[taxi]    ✗ Unknown tool")
+                if collector:
+                    collector.emit(EventType.TOOL_RESULT, iteration,
+                        tool=tc["name"], success=False, error="Unknown tool")
             else:
                 try:
                     result = await tool_fn.ainvoke(tc["args"])
-                    # Tools return Pydantic models with locations already offloaded.
-                    # Serialize to JSON for the ToolMessage — LLM only sees slim data + ref_id.
                     if hasattr(result, "model_dump_json"):
                         llm_content = result.model_dump_json()
                         last_raw = result.model_dump()
@@ -134,10 +182,16 @@ async def _run(message: str, store: LocationStore) -> tuple[str, Optional[dict],
                         except (json.JSONDecodeError, ValueError):
                             pass
                     trace.info("[taxi]    ← %s", _preview(llm_content))
+                    if collector:
+                        collector.emit(EventType.TOOL_RESULT, iteration,
+                            tool=tc["name"], success=True, error=None)
                 except Exception as exc:
                     llm_content = f"Tool error: {exc}"
                     logger.warning("Tool %s failed: %s", tc["name"], exc)
                     trace.info("[taxi]    ✗ Tool error: %s", exc)
+                    if collector:
+                        collector.emit(EventType.TOOL_RESULT, iteration,
+                            tool=tc["name"], success=False, error=str(exc))
 
             messages.append(ToolMessage(content=llm_content, tool_call_id=tc["id"]))
 

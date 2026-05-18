@@ -11,6 +11,7 @@ import asyncio
 import logging
 import os
 import time
+import uuid
 from dataclasses import dataclass
 from typing import Callable
 
@@ -49,14 +50,15 @@ class Plan(BaseModel):
 class AgentDef:
     description: str
     handler: Callable
+    supports_request_id: bool = False
 
 
 # ─── Domain handlers ──────────────────────────────────────────────────────────
 
-async def _handle_taxi(message: str) -> tuple[str, Artifact]:
+async def _handle_taxi(message: str, request_id: str) -> tuple[str, Artifact]:
     from app.domains.taxi.agent import run_taxi_agent
     try:
-        answer, raw, locations = await run_taxi_agent(message)
+        answer, raw, locations = await run_taxi_agent(message, request_id=request_id)
     except Exception as exc:
         raise RuntimeError(f"Taxi agent failed: {exc}") from exc
     return answer, Artifact(type="taxi_data", data={"raw": raw, "locations": locations})
@@ -109,6 +111,7 @@ _AGENTS: dict[str, AgentDef] = {
     "taxi": AgentDef(
         description="taxi availability, counts, distribution, hotspots, historical trends by zone or location",
         handler=_handle_taxi,
+        supports_request_id=True,
     ),
     "traffic-cameras": AgentDef(
         description="traffic cameras, road conditions, congestion levels, expressway status, incidents",
@@ -181,7 +184,10 @@ async def _execute(plan: Plan) -> list[tuple[str, str, Artifact]]:
             trace.info("[%s] ✗ Unknown agent — skipping", task.agent)
             return task.agent, f"No agent available for '{task.agent}'.", Artifact(type="error", data={})
         t0 = time.monotonic()
-        answer, artifact = await agent_def.handler(task.question)
+        if agent_def.supports_request_id:
+            answer, artifact = await agent_def.handler(task.question, str(uuid.uuid4()))
+        else:
+            answer, artifact = await agent_def.handler(task.question)
         elapsed = time.monotonic() - t0
         trace.info("[%s] ✓ Done in %.2fs", task.agent, elapsed)
         return task.agent, answer, artifact
