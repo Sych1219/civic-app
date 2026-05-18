@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from typing import Optional
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -30,8 +31,7 @@ class HintRegistry:
             await self._client.insert_hint(agent, candidate, embedding)
 
     async def get_active_hints(self, agent: str, question: str) -> list[str]:
-        hints = await self._client.get_all_hints(agent)
-        active = [h for h in hints if h["status"] == "active"]
+        active = await self._client.get_hints(agent, status="active")
         if not active:
             return []
         question_emb = await embed(question)
@@ -45,20 +45,16 @@ class HintRegistry:
         iterations: int,
         success: bool,
     ) -> None:
-        all_hints = await self._client.get_all_hints(agent)
-        for h in all_hints:
-            if h["status"] != "active":
-                continue
+        active_hints = await self._client.get_hints(agent, status="active")
+        for h in active_hints:
             present = h["body"] in hints_injected
             await self._client.insert_observation(
                 h["id"], request_id, present, iterations, success,
             )
 
     async def prune_underperforming(self, agent: str) -> None:
-        hints = await self._client.get_all_hints(agent)
+        hints = await self._client.get_hints(agent, status="active")
         for h in hints:
-            if h["status"] != "active":
-                continue
             obs = await self._client.get_observations(h["id"])
             if len(obs) < MIN_OBSERVATIONS:
                 continue
@@ -80,8 +76,11 @@ Reply with the INDEX (0-based) of the matching hint, or -1 if it's novel.
 Reply with a single integer only."""
 
     async def _find_similar(self, agent: str, candidate: str) -> Optional[dict]:
-        hints = await self._client.get_all_hints(agent)
-        pending_active = [h for h in hints if h["status"] in ("pending", "active")]
+        pending, active = await asyncio.gather(
+            self._client.get_hints(agent, status="pending"),
+            self._client.get_hints(agent, status="active"),
+        )
+        pending_active = pending + active
         if not pending_active:
             return None
 

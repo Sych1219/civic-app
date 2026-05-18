@@ -37,9 +37,12 @@ class MemoryClient:
             "iterations": iterations,
         })
 
-    async def get_all_hints(self, agent: str) -> list[dict]:
+    async def get_hints(self, agent: str, status: str | None = None) -> list[dict]:
+        params: dict = {"agent": agent}
+        if status is not None:
+            params["status"] = status
         async with httpx.AsyncClient(base_url=_BASE, timeout=_TIMEOUT) as http:
-            resp = await http.get("/api/v1/agent-memory/hints", params={"agent": agent})
+            resp = await http.get("/api/v1/agent-memory/hints", params=params)
             resp.raise_for_status()
             return resp.json()["data"]
 
