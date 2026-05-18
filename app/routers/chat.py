@@ -28,9 +28,9 @@ trace = logging.getLogger("trace")
 def _sep(label: str = "", width: int = 60) -> None:
     if label:
         pad = width - len(label) - 4
-        trace.info("┌── %s %s", label, "─" * max(pad, 0))
+        trace.info("┌── %s %s", label, "─" * max(pad, 0), stacklevel=2)
     else:
-        trace.info("└%s", "─" * (width - 1))
+        trace.info("└%s", "─" * (width - 1), stacklevel=2)
 
 # ─── Plan types ───────────────────────────────────────────────────────────────
 
@@ -139,14 +139,27 @@ Available agents:
 
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
     structured = llm.with_structured_output(Plan)
-    plan = await structured.ainvoke([
-        SystemMessage(content=system),
-        HumanMessage(content=message),
-    ])
+    t0 = time.monotonic()
+    try:
+        plan = await structured.ainvoke([
+            SystemMessage(content=system),
+            HumanMessage(content=message),
+        ])
+    except Exception as exc:
+        _sep("PLAN FAILED")
+        trace.info("│ LLM planning call raised: %s: %s", type(exc).__name__, exc)
+        _sep()
+        raise
 
+    elapsed = time.monotonic() - t0
     _sep("PLAN RESULT")
+    trace.info("│ LLM responded in %.2fs — %d step(s):", elapsed, len(plan.tasks))
+    if not plan.tasks:
+        trace.info("│  (planner returned no steps)")
     for i, task in enumerate(plan.tasks, 1):
-        trace.info("│  Task %d → agent=%-20s question=%s", i, f'"{task.agent}"', task.question)
+        trace.info("│  Step %d:", i)
+        trace.info("│    agent    = %s", task.agent)
+        trace.info("│    question = %s", task.question)
     _sep()
     return plan
 
