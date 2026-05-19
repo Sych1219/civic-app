@@ -30,7 +30,10 @@ async def fetch_camera_detail(camera_id: str) -> CameraDetail:
 async def fetch_expressway(code: str) -> list[CameraDetail]:
     """Fetch all cameras along a given expressway corridor (e.g. CTE, BKE, PIE)."""
     async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-        resp = await client.get(f"{JAVA_BACKEND_API_URL}/api/cameras/expressway/{code}")
+        resp = await client.get(
+            f"{JAVA_BACKEND_API_URL}/api/cameras",
+            params={"expressway": code},
+        )
         resp.raise_for_status()
         return [CameraDetail(**c) for c in resp.json()["data"]["cameras"]]
 
@@ -39,7 +42,7 @@ async def fetch_nearby(lat: float, lng: float, radius: int = 1000) -> list[Camer
     """Fetch cameras within `radius` metres of the given GPS coordinate."""
     async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
         resp = await client.get(
-            f"{JAVA_BACKEND_API_URL}/api/cameras/nearby",
+            f"{JAVA_BACKEND_API_URL}/api/cameras",
             params={"lat": lat, "lng": lng, "radius": radius},
         )
         resp.raise_for_status()
@@ -50,8 +53,8 @@ async def search_cameras(query: str) -> list[CameraDetail]:
     """Search cameras by location name."""
     async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
         resp = await client.get(
-            f"{JAVA_BACKEND_API_URL}/api/cameras/search",
-            params={"q": query},
+            f"{JAVA_BACKEND_API_URL}/api/cameras",
+            params={"search": query},
         )
         resp.raise_for_status()
         return [CameraDetail(**c) for c in resp.json()["data"]["cameras"]]
