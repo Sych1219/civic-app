@@ -156,10 +156,10 @@ async def _synthesize(original_question: str, results: list[tuple[str, str, Arti
 async def _generate_title(message: str) -> str:
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
     resp = await llm.ainvoke([
-        SystemMessage(content="为以下用户问题生成一个≤10字的中文标题，只输出标题本身，不加引号。"),
+        SystemMessage(content="Generate a concise title (≤8 words) for the following user query. Output the title only, no quotes."),
         HumanMessage(content=message),
     ])
-    return resp.content.strip()[:20]
+    return resp.content.strip()
 
 
 # ─── Public entry point (non-streaming) ──────────────────────────────────────
@@ -196,7 +196,7 @@ async def route_and_execute(
         user_content=message,
         assistant_segments=[{
             "content": answer,
-            "artifacts": [{"type": a.type, "summary": str(a.data)[:100]} for a in artifacts],
+            "artifacts": [{"type": a.type} for a in artifacts],
         }],
     )
 
@@ -232,7 +232,7 @@ async def route_and_execute_streaming(
         artifacts = [artifact for _, _, artifact in results]
         await session_manager.append_turn(session_id, user_content=message, assistant_segments=[{
             "content": answer,
-            "artifacts": [{"type": a.type, "summary": str(a.data)[:100]} for a in artifacts],
+            "artifacts": [{"type": a.type} for a in artifacts],
         }])
         if is_first:
             title = await _generate_title(message)
@@ -277,7 +277,7 @@ async def route_and_execute_streaming(
     artifacts = [artifact] if artifact else []
     await session_manager.append_turn(session_id, user_content=message, assistant_segments=[{
         "content": collected_answer,
-        "artifacts": [{"type": a.type, "summary": str(a.data)[:100]} for a in artifacts],
+        "artifacts": [{"type": a.type} for a in artifacts],
     }])
 
     if is_first:
