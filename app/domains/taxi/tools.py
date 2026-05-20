@@ -1,5 +1,6 @@
 import logging
 import os
+from pathlib import Path
 from typing import Optional
 
 import httpx
@@ -189,3 +190,24 @@ async def get_recent_taxi_activity(minutes: int = 15) -> TimelineData:
         )
         resp.raise_for_status()
         return _offload_timeline(TimelineData.model_validate(_unwrap(resp.json())))
+
+
+_PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
+_ALLOWED_PREFIXES = [
+    str((_PROJECT_ROOT / "memory").resolve()),
+    str((_PROJECT_ROOT / "workspace" / "officers").resolve()),
+]
+
+
+@tool
+def read_file(path: str) -> str:
+    """Read a local knowledge file (memory/MEMORY.md or workspace/officers/<id>.md).
+    Use when the System Prompt index mentions a file and you need its full content.
+    """
+    from pathlib import Path as _Path
+    target = (_PROJECT_ROOT / path).resolve()
+    if not any(str(target).startswith(prefix) for prefix in _ALLOWED_PREFIXES):
+        return f"Error: '{path}' is not in the allowed directories."
+    if not target.exists():
+        return f"Error: file not found: {path}"
+    return target.read_text(encoding="utf-8")

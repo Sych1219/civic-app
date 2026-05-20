@@ -1,13 +1,16 @@
+import json
 import logging
 import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import httpx
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 
-from app.routers.chat import route_and_execute
+from app.routers.chat import route_and_execute, route_and_execute_streaming
 from app.models import AnalyzeCameraRequest, AnalyzeCameraResponse, ChatRequest, ChatResponse
 from app.services.persistence import persist_analysis
 from app.domains.traffic.camera_pipeline import analyze_camera_from_url
@@ -19,7 +22,6 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s — %(message)s",
 )
 
-# Trace logger: clean single-line format so thinking steps are easy to read.
 _trace_handler = logging.StreamHandler()
 _trace_handler.setFormatter(
     logging.Formatter("%(filename)s:%(funcName)s:%(lineno)-4d %(message)s")
@@ -27,19 +29,30 @@ _trace_handler.setFormatter(
 _trace_logger = logging.getLogger("trace")
 _trace_logger.addHandler(_trace_handler)
 _trace_logger.setLevel(logging.INFO)
-_trace_logger.propagate = False  # don't double-print through root logger
+_trace_logger.propagate = False
 
 logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Scan and load domain plugins
+    from app.domains.scanner import scan_domains
+    domains_path = Path(__file__).parent / "domains"
+    app.state.domains = scan_domains(domains_path)
+    logger.info("Loaded %d domains: %s", len(app.state.domains), list(app.state.domains))
+
+    # Initialise session manager
+    from app.sessions.manager import _init
+    _sm = _init(Path(__file__).parent.parent / "sessions")
+    logger.info("SessionManager initialised at: %s", _sm.sessions_dir)
+
     yield
 
 
 app = FastAPI(
-    title="Taxi Spatial Q&A — Singapore",
-    version="1.0.0",
+    title="Civic App — Singapore",
+    version="2.0.0",
     lifespan=lifespan,
 )
 
@@ -50,6 +63,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Register sessions router
+from app.routers import sessions as sessions_router
+app.include_router(sessions_router.router)
+
 
 def _load_mock_chat_response() -> ChatResponse:
     mock_path = os.path.join(os.path.dirname(__file__), "mock_chat_response.json")
@@ -58,15 +75,45 @@ def _load_mock_chat_response() -> ChatResponse:
 
 _MOCK_CHAT_RESPONSE = _load_mock_chat_response()
 
+_SSE_ENABLED = os.environ.get("SSE_ENABLED", "true").lower() == "true"
 
-@app.post("/api/v1/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest):
+
+@app.post("/api/v1/chat")
+async def chat(request: ChatRequest, req: Request):
     """Natural language query — routes to the appropriate domain agent."""
     if os.environ.get("MOCK_CHAT", "").lower() == "true":
         logger.info("MOCK_CHAT enabled — returning hardcoded response")
         return _MOCK_CHAT_RESPONSE
+
+    agents = req.app.state.domains
+
+    if _SSE_ENABLED:
+        async def _event_stream():
+            try:
+                async for event in route_and_execute_streaming(
+                    request.message,
+                    agents,
+                    session_id=request.session_id,
+                    officer_id=request.officer_id,
+                ):
+                    yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+            except Exception as exc:
+                logger.error("Streaming chat failed: %s", exc, exc_info=True)
+                yield f"data: {json.dumps({'type': 'error', 'error': str(exc)})}\n\n"
+
+        return StreamingResponse(
+            _event_stream(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
     try:
-        return await route_and_execute(request.message)
+        return await route_and_execute(
+            request.message,
+            agents,
+            session_id=request.session_id,
+            officer_id=request.officer_id,
+        )
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
     except Exception as exc:

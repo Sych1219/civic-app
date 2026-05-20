@@ -3,7 +3,7 @@ import json
 import logging
 import uuid
 from datetime import datetime, timezone, timedelta
-from typing import Optional
+from typing import AsyncGenerator, Optional
 
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langchain_openai import ChatOpenAI
@@ -17,6 +17,7 @@ from app.domains.taxi.tools import (
     find_nearest_taxis,
     get_recent_taxi_activity,
     get_taxi_history,
+    read_file,
     resolve_zone,
 )
 from app.memory.client import MemoryClient
@@ -31,7 +32,6 @@ trace = logging.getLogger("trace")
 _RESULT_PREVIEW_LEN = 200
 _SGT = timezone(timedelta(hours=8))
 
-# Module-level singletons — initialised once at import time
 _mem_client = MemoryClient()
 _registry   = HintRegistry(_mem_client)
 
@@ -50,12 +50,20 @@ _TOOLS = [
     get_taxi_history,
     get_recent_taxi_activity,
     geocode_place,
+    read_file,
 ]
 
 _TOOL_MAP = {t.name: t for t in _TOOLS}
 
 
-def _build_system_prompt(hints: list[str]) -> str:
+def _build_system_prompt(
+    hints: list[str],
+    system_notes: str = "",
+    officer_index: str = "",
+) -> str:
+    from app.memory.file_memory import file_memory_manager
+    from app.memory.injector import build_hint_block
+
     now_sgt = datetime.now(_SGT)
     base = f"""\
 You are a taxi availability assistant for Singapore.
@@ -70,23 +78,35 @@ Tool selection guide:
 - Road or expressway (PIE, CTE, AYE, Orchard Road…) → count_taxis_near_road
 - Nearest taxi to a location → geocode_place first, then find_nearest_taxis
 - Historical or trend question → get_taxi_history or get_recent_taxi_activity
-- Unsure about a zone name → resolve_zone first\
+- Unsure about a zone name → resolve_zone first
+- Need full memory or officer details → read_file\
 """
-    return base + build_hint_block(hints)
+
+    notes_section = f"\n\n## Domain Notes\n{system_notes}" if system_notes else ""
+    officer_section = f"\n\n## Officer Context\n{officer_index}" if officer_index else ""
+    memory_index = file_memory_manager.read_index()
+    memory_section = f"\n\n{memory_index}" if memory_index else ""
+
+    return base + notes_section + officer_section + memory_section + build_hint_block(hints)
 
 
 async def run_taxi_agent(
     message: str,
-    request_id: str | None = None,
+    request_id: Optional[str] = None,
+    system_notes: str = "",
+    officer_id: Optional[str] = None,
 ) -> tuple[str, Optional[dict], dict[str, dict]]:
     """Run the tools-based taxi agent.
 
     Returns:
         answer:    LLM-generated text answer.
-        last_raw:  Last tool result as a dict (locations already offloaded).
-        locations: Mapping of ref_id → GeoJsonFeatureCollection dict for all tool calls.
+        last_raw:  Last tool result as a dict.
+        locations: Mapping of ref_id → GeoJsonFeatureCollection dict.
     """
+    from app.workspace.officer_manager import officer_manager
+
     request_id = request_id or str(uuid.uuid4())
+    officer_index = officer_manager.load_index(officer_id)
 
     trace.info("[taxi] Sub-question: %s", message)
     trace.info("[taxi] Available tools: %s", [t.name for t in _TOOLS])
@@ -100,7 +120,9 @@ async def run_taxi_agent(
     coll_tok  = collector_var.set(collector)
 
     try:
-        answer, last_raw, locations = await _run(message, store, hints_injected)
+        answer, last_raw, locations = await _run(
+            message, store, hints_injected, system_notes, officer_index
+        )
     finally:
         location_store_var.reset(ls_tok)
         collector_var.reset(coll_tok)
@@ -116,12 +138,14 @@ async def _run(
     message: str,
     store: LocationStore,
     hints: list[str],
+    system_notes: str = "",
+    officer_index: str = "",
 ) -> tuple[str, Optional[dict], dict[str, dict]]:
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
     llm_with_tools = llm.bind_tools(_TOOLS)
 
     messages = [
-        SystemMessage(content=_build_system_prompt(hints)),
+        SystemMessage(content=_build_system_prompt(hints, system_notes, officer_index)),
         HumanMessage(content=message),
     ]
 
@@ -144,8 +168,7 @@ async def _run(
             trace.info("[taxi] ── LLM decision: no tool calls → generating final answer")
             trace.info("[taxi] ── Answer: %s", _preview(response.content))
             if collector:
-                collector.emit(EventType.FINAL_ANSWER, iteration,
-                    iterations_used=iteration)
+                collector.emit(EventType.FINAL_ANSWER, iteration, iterations_used=iteration)
             return response.content, last_raw, store.collect()
 
         trace.info(
@@ -160,8 +183,7 @@ async def _run(
             trace.info("[taxi]    ▶ %s(%s)", tc["name"], args_str)
 
             if collector:
-                collector.emit(EventType.TOOL_CALL, iteration,
-                    tool=tc["name"], args=tc["args"])
+                collector.emit(EventType.TOOL_CALL, iteration, tool=tc["name"], args=tc["args"])
 
             if tool_fn is None:
                 llm_content = f"Unknown tool: {tc['name']}"
@@ -198,3 +220,80 @@ async def _run(
     trace.info("[taxi] ── Reached max iterations (%d), returning last message", max_iters)
     last_content = messages[-1].content if hasattr(messages[-1], "content") else ""
     return last_content, last_raw, store.collect()
+
+
+# ─── Streaming version (Phase 5 — SSE) ───────────────────────────────────────
+
+async def run_taxi_agent_streaming(
+    message: str,
+    system_notes: str = "",
+    officer_id: Optional[str] = None,
+) -> AsyncGenerator[dict, None]:
+    from app.workspace.officer_manager import officer_manager
+
+    officer_index = officer_manager.load_index(officer_id)
+    hints_injected = await _registry.get_active_hints("taxi", message)
+
+    store  = LocationStore()
+    ls_tok = location_store_var.set(store)
+    try:
+        async for event in _run_streaming(message, store, hints_injected, system_notes, officer_index):
+            yield event
+    finally:
+        location_store_var.reset(ls_tok)
+
+
+async def _run_streaming(
+    message: str,
+    store: LocationStore,
+    hints: list[str],
+    system_notes: str = "",
+    officer_index: str = "",
+) -> AsyncGenerator[dict, None]:
+    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+    llm_with_tools = llm.bind_tools(_TOOLS)
+
+    messages = [
+        SystemMessage(content=_build_system_prompt(hints, system_notes, officer_index)),
+        HumanMessage(content=message),
+    ]
+
+    last_raw: Optional[dict] = None
+    max_iters = 5
+
+    for iteration in range(1, max_iters + 1):
+        response = await llm_with_tools.ainvoke(messages)
+        messages.append(response)
+
+        if not response.tool_calls:
+            yield {"type": "token", "content": response.content}
+            yield {"type": "final", "content": response.content, "locations": store.collect()}
+            return
+
+        for tc in response.tool_calls:
+            yield {"type": "tool_start", "tool": tc["name"], "input": tc["args"]}
+            tool_fn = _TOOL_MAP.get(tc["name"])
+
+            if tool_fn is None:
+                llm_content = f"Unknown tool: {tc['name']}"
+                yield {"type": "tool_end", "tool": tc["name"], "output": llm_content}
+            else:
+                try:
+                    result = await tool_fn.ainvoke(tc["args"])
+                    if hasattr(result, "model_dump_json"):
+                        llm_content = result.model_dump_json()
+                        last_raw = result.model_dump()
+                    else:
+                        llm_content = str(result)
+                    yield {"type": "tool_end", "tool": tc["name"], "output": llm_content[:200]}
+                except Exception as exc:
+                    llm_content = f"Tool error: {exc}"
+                    yield {"type": "tool_end", "tool": tc["name"], "output": llm_content}
+
+            messages.append(ToolMessage(content=llm_content, tool_call_id=tc["id"]))
+
+        yield {"type": "new_response"}
+
+    last_content = messages[-1].content if hasattr(messages[-1], "content") else ""
+    yield {"type": "token", "content": last_content}
+    yield {"type": "final", "content": last_content, "locations": store.collect()}

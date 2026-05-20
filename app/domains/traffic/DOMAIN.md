@@ -5,12 +5,12 @@ handler: app.domains.traffic.handler.handle
 supports_request_id: false
 ---
 
-## 能力说明
-对接新加坡 LTA 交通摄像头数据，可回答：
-- 指定路段当前路况
-- 某高速公路拥堵情况
-- 路面事故或异常事件
+## Capabilities
+Connects to Singapore LTA traffic camera data. Handles:
+- Current road conditions on a specified stretch
+- Congestion levels on expressways
+- Road incidents or abnormal events
 
-## 示例 Query
-- "PIE 现在堵吗？"
-- "CTE 摄像头情况怎么样？"
+## Example Queries
+- "Is PIE congested right now?"
+- "What does the CTE camera show?"

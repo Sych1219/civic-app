@@ -1,26 +1,25 @@
 """
 Unified chat router — uses a Planner to decompose user queries into subtasks,
-dispatches each to the right domain subagent in parallel, then synthesizes.
+dispatches each to the right domain subagent in parallel, then synthesises.
 
-Adding a new domain:
-  1. Write an async handler: async def _handle_X(msg) -> tuple[str, Artifact]
-  2. Register it in _AGENTS with a clear description
+Domains are loaded dynamically from app/domains/*/DOMAIN.md at startup.
 """
 
 import asyncio
+import json
 import logging
-import os
 import time
 import uuid
-from dataclasses import dataclass
-from typing import Callable
+from typing import TYPE_CHECKING, AsyncGenerator, Optional
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel
 
-from app.models import Artifact, ChatResponse, CameraDetail
-from app.services.persistence import persist_analysis
+from app.models import Artifact, ChatResponse
+
+if TYPE_CHECKING:
+    from app.domains.scanner import DomainDef
 
 logger = logging.getLogger(__name__)
 trace = logging.getLogger("trace")
@@ -33,6 +32,7 @@ def _sep(label: str = "", width: int = 60) -> None:
     else:
         trace.info("└%s", "─" * (width - 1), stacklevel=2)
 
+
 # ─── Plan types ───────────────────────────────────────────────────────────────
 
 class SubTask(BaseModel):
@@ -44,86 +44,11 @@ class Plan(BaseModel):
     tasks: list[SubTask]
 
 
-# ─── Agent registry ───────────────────────────────────────────────────────────
-
-@dataclass
-class AgentDef:
-    description: str
-    handler: Callable
-    supports_request_id: bool = False
-
-
-# ─── Domain handlers ──────────────────────────────────────────────────────────
-
-async def _handle_taxi(message: str, request_id: str) -> tuple[str, Artifact]:
-    from app.domains.taxi.agent import run_taxi_agent
-    try:
-        answer, raw, locations = await run_taxi_agent(message, request_id=request_id)
-    except Exception as exc:
-        raise RuntimeError(f"Taxi agent failed: {exc}") from exc
-    return answer, Artifact(type="taxi_data", data={"raw": raw, "locations": locations})
-
-
-_MOCK_TRAFFIC_RESPONSE = {
-    "answer": "The CTE is not jammed. Traffic is flowing moderately in some areas, while other sections are experiencing free-flow conditions. Overall, vehicle density is normal, and there are no incidents reported.",
-    "view_type": "corridor",
-    "cameras": [
-        {"cameraId": 1701, "locationName": None, "latitude": 1.32360482, "longitude": 103.8587802, "latestImage": "https://images.data.gov.sg/api/traffic-images/2026/03/6a959f48-4b32-463d-988a-d12576b38d6d.jpg", "timestamp": "2026-03-24T17:01:11+08:00", "resolution": "HD", "analysis": {"congestion": "moderate", "vehicleDensity": "normal", "incidents": "none", "weather": "clear", "roadSurface": "dry", "summary": "Traffic is flowing moderately on the CTE with a normal density of vehicles and clear weather conditions."}},
-        {"cameraId": 1703, "locationName": None, "latitude": 1.32814722, "longitude": 103.86220328, "latestImage": "https://images.data.gov.sg/api/traffic-images/2026/03/1cb14b17-8ebb-49d9-847f-6f8fe2abc8de.jpg", "timestamp": "2026-03-24T17:01:11+08:00", "resolution": "HD", "analysis": {"congestion": "free_flow", "vehicleDensity": "normal", "incidents": "none", "weather": "clear", "roadSurface": "dry", "summary": "Traffic is flowing smoothly with a normal density of vehicles on the CTE expressway."}},
-    ],
-}
-
-
-async def _handle_traffic_cameras(message: str) -> tuple[str, Artifact]:
-    if os.environ.get("MOCK_TRAFFIC_CHAT", "").lower() == "true":
-        logger.info("MOCK_TRAFFIC_CHAT enabled — returning hardcoded response")
-        mock = _MOCK_TRAFFIC_RESPONSE
-        return mock["answer"], Artifact(
-            type="traffic_cameras",
-            data={"view_type": mock["view_type"], "cameras": mock["cameras"]},
-        )
-
-    from app.domains.traffic.camera_pipeline import run_traffic_chat
-    result = await run_traffic_chat(message)
-    cameras: list[CameraDetail] = result.get("cameras", [])
-
-    asyncio.gather(
-        *[
-            persist_analysis(str(cam.cameraId), cam.analysis)
-            for cam in cameras
-            if cam.analysis is not None
-        ],
-        return_exceptions=True,
-    )
-
-    return result["answer"], Artifact(
-        type="traffic_cameras",
-        data={
-            "view_type": result["view_type"],
-            "cameras": [c.model_dump(by_alias=True) for c in cameras],
-        },
-    )
-
-
-# ─── Registry (add new domains here) ─────────────────────────────────────────
-
-_AGENTS: dict[str, AgentDef] = {
-    "taxi": AgentDef(
-        description="taxi availability, counts, distribution, hotspots, historical trends by zone or location",
-        handler=_handle_taxi,
-        supports_request_id=True,
-    ),
-    "traffic-cameras": AgentDef(
-        description="traffic cameras, road conditions, congestion levels, expressway status, incidents",
-        handler=_handle_traffic_cameras,
-    ),
-}
-
 # ─── Planner ──────────────────────────────────────────────────────────────────
 
-async def _plan(message: str) -> Plan:
+async def _plan(message: str, agents: dict) -> Plan:
     descriptions = "\n".join(
-        f"- {name}: {defn.description}" for name, defn in _AGENTS.items()
+        f"- {name}: {defn.description}" for name, defn in agents.items()
     )
     system = f"""You are a query planner. Decompose the user's question into subtasks.
 For each subtask, pick the most relevant agent and write a focused sub-question tailored to that agent.
@@ -136,7 +61,7 @@ Available agents:
 
     _sep("PLANNER")
     trace.info("│ User query : %s", message)
-    trace.info("│ Available agents: %s", list(_AGENTS.keys()))
+    trace.info("│ Available agents: %s", list(agents.keys()))
     trace.info("│ Calling LLM to decompose query into subtasks...")
     _sep()
 
@@ -157,19 +82,15 @@ Available agents:
     elapsed = time.monotonic() - t0
     _sep("PLAN RESULT")
     trace.info("│ LLM responded in %.2fs — %d step(s):", elapsed, len(plan.tasks))
-    if not plan.tasks:
-        trace.info("│  (planner returned no steps)")
     for i, task in enumerate(plan.tasks, 1):
-        trace.info("│  Step %d:", i)
-        trace.info("│    agent    = %s", task.agent)
-        trace.info("│    question = %s", task.question)
+        trace.info("│  Step %d: agent=%s  question=%s", i, task.agent, task.question)
     _sep()
     return plan
 
 
 # ─── Executor ─────────────────────────────────────────────────────────────────
 
-async def _execute(plan: Plan) -> list[tuple[str, str, Artifact]]:
+async def _execute(plan: Plan, agents: dict) -> list[tuple[str, str, Artifact]]:
     """Run all subtasks in parallel. Returns list of (agent_name, answer, artifact)."""
     _sep("EXECUTOR")
     trace.info("│ Dispatching %d task(s) in parallel:", len(plan.tasks))
@@ -178,16 +99,20 @@ async def _execute(plan: Plan) -> list[tuple[str, str, Artifact]]:
     _sep()
 
     async def run_one(task: SubTask) -> tuple[str, str, Artifact]:
-        agent_def = _AGENTS.get(task.agent)
-        if agent_def is None:
+        defn = agents.get(task.agent)
+        if defn is None:
             logger.warning("Planner requested unknown agent '%s', skipping", task.agent)
             trace.info("[%s] ✗ Unknown agent — skipping", task.agent)
             return task.agent, f"No agent available for '{task.agent}'.", Artifact(type="error", data={})
+
+        kwargs: dict = {"message": task.question}
+        if defn.supports_request_id:
+            kwargs["request_id"] = str(uuid.uuid4())
+        if defn.system_notes:
+            kwargs["system_notes"] = defn.system_notes
+
         t0 = time.monotonic()
-        if agent_def.supports_request_id:
-            answer, artifact = await agent_def.handler(task.question, str(uuid.uuid4()))
-        else:
-            answer, artifact = await agent_def.handler(task.question)
+        answer, artifact = await defn.handler(**kwargs)
         elapsed = time.monotonic() - t0
         trace.info("[%s] ✓ Done in %.2fs", task.agent, elapsed)
         return task.agent, answer, artifact
@@ -226,16 +151,36 @@ async def _synthesize(original_question: str, results: list[tuple[str, str, Arti
     return response.content
 
 
-# ─── Public entry point ───────────────────────────────────────────────────────
+# ─── Title generator ─────────────────────────────────────────────────────────
 
-async def route_and_execute(message: str) -> ChatResponse:
+async def _generate_title(message: str) -> str:
+    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+    resp = await llm.ainvoke([
+        SystemMessage(content="为以下用户问题生成一个≤10字的中文标题，只输出标题本身，不加引号。"),
+        HumanMessage(content=message),
+    ])
+    return resp.content.strip()[:20]
+
+
+# ─── Public entry point (non-streaming) ──────────────────────────────────────
+
+async def route_and_execute(
+    message: str,
+    agents: dict,
+    session_id: str = "default",
+    officer_id: Optional[str] = None,
+) -> ChatResponse:
+    from app.sessions.manager import session_manager
+
     t_start = time.monotonic()
     _sep("REQUEST START", width=60)
     trace.info("│ %s", message)
     _sep()
 
-    plan = await _plan(message)
-    results = await _execute(plan)
+    is_first = len(session_manager.load_session(session_id).get("messages", [])) == 0
+
+    plan = await _plan(message, agents)
+    results = await _execute(plan, agents)
     answer = await _synthesize(message, results)
 
     elapsed = time.monotonic() - t_start
@@ -245,4 +190,101 @@ async def route_and_execute(message: str) -> ChatResponse:
     _sep()
 
     artifacts = [artifact for _, _, artifact in results]
+
+    await session_manager.append_turn(
+        session_id,
+        user_content=message,
+        assistant_segments=[{
+            "content": answer,
+            "artifacts": [{"type": a.type, "summary": str(a.data)[:100]} for a in artifacts],
+        }],
+    )
+
+    if is_first:
+        title = await _generate_title(message)
+        session_manager.update_title(session_id, title)
+
     return ChatResponse(answer=answer, artifacts=artifacts)
+
+
+# ─── Streaming entry point (SSE) ─────────────────────────────────────────────
+
+async def route_and_execute_streaming(
+    message: str,
+    agents: dict,
+    session_id: str = "default",
+    officer_id: Optional[str] = None,
+) -> AsyncGenerator[dict, None]:
+    from app.sessions.manager import session_manager
+
+    is_first = len(session_manager.load_session(session_id).get("messages", [])) == 0
+
+    plan = await _plan(message, agents)
+
+    if len(plan.tasks) == 0:
+        yield {"type": "error", "error": "No agents selected for this query."}
+        return
+
+    # For multi-task plans, fall back to non-streaming execution
+    if len(plan.tasks) > 1:
+        results = await _execute(plan, agents)
+        answer = await _synthesize(message, results)
+        artifacts = [artifact for _, _, artifact in results]
+        await session_manager.append_turn(session_id, user_content=message, assistant_segments=[{
+            "content": answer,
+            "artifacts": [{"type": a.type, "summary": str(a.data)[:100]} for a in artifacts],
+        }])
+        if is_first:
+            title = await _generate_title(message)
+            session_manager.update_title(session_id, title)
+            yield {"type": "title", "session_id": session_id, "title": title}
+        yield {"type": "done", "session_id": session_id, "artifacts": [
+            {"type": a.type} for a in artifacts
+        ], "answer": answer}
+        return
+
+    task = plan.tasks[0]
+    defn = agents.get(task.agent)
+    if defn is None:
+        yield {"type": "error", "error": f"No agent available for '{task.agent}'."}
+        return
+
+    kwargs: dict = {"message": task.question}
+    if defn.system_notes:
+        kwargs["system_notes"] = defn.system_notes
+    if officer_id:
+        kwargs["officer_id"] = officer_id
+
+    collected_answer = ""
+    artifact: Optional[Artifact] = None
+
+    if defn.streaming_handler is not None:
+        async for event in defn.streaming_handler(**kwargs):
+            if event.get("type") == "final":
+                collected_answer = event.get("content", "")
+                locations = event.get("locations", {})
+                artifact = Artifact(type="taxi_data", data={"raw": None, "locations": locations})
+            else:
+                yield event
+    else:
+        # Non-streaming fallback: emit synthetic start/done events
+        yield {"type": "tool_start", "tool": task.agent, "input": {}}
+        if defn.supports_request_id:
+            kwargs["request_id"] = str(uuid.uuid4())
+        collected_answer, artifact = await defn.handler(**kwargs)
+        yield {"type": "tool_end", "tool": task.agent, "output": collected_answer[:200]}
+
+    artifacts = [artifact] if artifact else []
+    await session_manager.append_turn(session_id, user_content=message, assistant_segments=[{
+        "content": collected_answer,
+        "artifacts": [{"type": a.type, "summary": str(a.data)[:100]} for a in artifacts],
+    }])
+
+    if is_first:
+        title = await _generate_title(message)
+        session_manager.update_title(session_id, title)
+        yield {"type": "title", "session_id": session_id, "title": title}
+
+    yield {"type": "done", "session_id": session_id, "artifacts": [
+        {"type": a.type} for a in artifacts
+    ], "answer": collected_answer}

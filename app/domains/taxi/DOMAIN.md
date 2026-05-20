@@ -6,12 +6,12 @@ streaming_handler: app.domains.taxi.handler.handle_streaming
 supports_request_id: true
 ---
 
-## 能力说明
-对接新加坡 LTA DataMall 实时出租车数据，可回答：
-- 某地点附近当前有多少辆出租车
-- 哪个区域出租车密度最高
-- 出租车分布热点
+## Capabilities
+Connects to Singapore LTA DataMall real-time taxi data. Handles:
+- Current taxi count near a location
+- Which zone has the highest taxi density
+- Taxi distribution hotspots
 
-## 示例 Query
-- "Orchard Road 附近有多少辆出租车？"
-- "现在全岛出租车最多的地方在哪？"
+## Example Queries
+- "How many taxis are near Orchard Road?"
+- "Where are the most taxis island-wide right now?"

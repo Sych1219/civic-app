@@ -15,6 +15,8 @@ class QueryResponse(BaseModel):
 
 class ChatRequest(BaseModel):
     message: str
+    session_id: str = "default"
+    officer_id: Optional[str] = None
 
 
 class Artifact(BaseModel):

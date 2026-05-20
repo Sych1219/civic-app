@@ -20,3 +20,8 @@ dist/
 # IDE settings
 .idea/
 .vscode/
+
+# Runtime data (generated, not committed)
+sessions/
+memory/
+workspace/officers/

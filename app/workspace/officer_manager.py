@@ -26,7 +26,7 @@ class OfficerProfileManager:
             f"- officer_id: {meta.get('officer_id', officer_id)}\n"
             f"- name: {meta.get('name', '')}\n"
             f"- role: {meta.get('role', '')}\n"
-            f'→ 完整画像：调用 read_file("workspace/officers/{officer_id}.md")'
+            f'→ Full profile: call read_file("workspace/officers/{officer_id}.md")'
         )
 
 
