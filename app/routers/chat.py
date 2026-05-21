@@ -1,8 +1,10 @@
 """
-Unified chat router — uses a Planner to decompose user queries into subtasks,
-dispatches each to the right domain subagent in parallel, then synthesises.
+Unified chat router — uses a dynamic Context Loader + LLM Decision Layer to
+assemble skill-based context and decide whether to answer directly, dispatch
+to one domain agent, or fan out to multiple agents and synthesise.
 
-Domains are loaded dynamically from app/domains/*/DOMAIN.md at startup.
+Skills are loaded from memory/skills/*.md; experience from memory/long_term/.
+Domain agents are still registered via app/domains/*/DOMAIN.md at startup.
 """
 
 import asyncio
@@ -17,6 +19,7 @@ from langchain_openai import ChatOpenAI
 from pydantic import BaseModel
 
 from app.models import Artifact, ChatResponse
+from app.memory.context_loader import build_context_prompt
 
 if TYPE_CHECKING:
     from app.domains.scanner import DomainDef
@@ -41,28 +44,44 @@ class SubTask(BaseModel):
 
 
 class Plan(BaseModel):
-    tasks: list[SubTask]
+    direct_answer: Optional[str] = None  # set when LLM can answer without any agent
+    tasks: list[SubTask] = []
 
 
 # ─── Planner ──────────────────────────────────────────────────────────────────
 
 async def _plan(message: str, agents: dict) -> Plan:
-    descriptions = "\n".join(
-        f"- {name}: {defn.description}" for name, defn in agents.items()
-    )
-    system = f"""You are a query planner. Decompose the user's question into subtasks.
-For each subtask, pick the most relevant agent and write a focused sub-question tailored to that agent.
-Only include agents that are genuinely needed to answer the question.
-Use at most ONE subtask per agent — do not split a single agent's work into multiple subtasks.
-If the question can be answered by one agent, produce exactly one subtask.
+    context_text, matched_agents = build_context_prompt(message)
 
-Available agents:
-{descriptions}"""
+    # Always expose all registered agents — skill context guides the LLM on when to use each
+    agent_list_text = "\n".join(
+        f"- `{name}`: {defn.description}" for name, defn in agents.items()
+    )
+
+    context_section = f"\n\n{context_text}" if context_text else ""
+
+    system = f"""You are an intelligent routing assistant. Given the user's question, decide the best way to answer it.
+
+You have THREE options:
+
+A) **Direct answer** — if the question requires no external data or tools (e.g. general knowledge, coding questions, greetings), set `direct_answer` to your response and leave `tasks` empty.
+
+B) **Single agent** — if the question needs data from exactly one domain, create one entry in `tasks`.
+
+C) **Multiple agents** — if the question benefits from combining multiple domains (e.g. congestion questions benefit from BOTH traffic cameras AND taxi density), create multiple entries in `tasks`.
+
+Registered agents:
+{agent_list_text}
+
+Rules:
+- At most ONE subtask per agent.
+- Only include agents genuinely needed — never force-fit unrelated domains.
+- If the question has nothing to do with any available agent, use option A.{context_section}"""
 
     _sep("PLANNER")
     trace.info("│ User query : %s", message)
-    trace.info("│ Available agents: %s", list(agents.keys()))
-    trace.info("│ Calling LLM to decompose query into subtasks...")
+    trace.info("│ Matched skills → agents: %s", matched_agents or "(none, showing all)")
+    trace.info("│ Calling LLM to decide routing...")
     _sep()
 
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
@@ -81,9 +100,13 @@ Available agents:
 
     elapsed = time.monotonic() - t0
     _sep("PLAN RESULT")
-    trace.info("│ LLM responded in %.2fs — %d step(s):", elapsed, len(plan.tasks))
-    for i, task in enumerate(plan.tasks, 1):
-        trace.info("│  Step %d: agent=%s  question=%s", i, task.agent, task.question)
+    if plan.direct_answer:
+        trace.info("│ LLM responded in %.2fs — DIRECT ANSWER", elapsed)
+        trace.info("│  %s", plan.direct_answer[:120])
+    else:
+        trace.info("│ LLM responded in %.2fs — %d agent task(s):", elapsed, len(plan.tasks))
+        for i, task in enumerate(plan.tasks, 1):
+            trace.info("│  Step %d: agent=%s  question=%s", i, task.agent, task.question)
     _sep()
     return plan
 
@@ -180,16 +203,20 @@ async def route_and_execute(
     is_first = len(session_manager.load_session(session_id).get("messages", [])) == 0
 
     plan = await _plan(message, agents)
-    results = await _execute(plan, agents)
-    answer = await _synthesize(message, results)
+
+    if plan.direct_answer:
+        answer = plan.direct_answer
+        artifacts: list[Artifact] = []
+    else:
+        results = await _execute(plan, agents)
+        answer = await _synthesize(message, results)
+        artifacts = [artifact for _, _, artifact in results]
 
     elapsed = time.monotonic() - t_start
     _sep("FINAL ANSWER")
     trace.info("│ %s", answer[:200].replace("\n", " "))
     trace.info("│ Total time: %.2fs", elapsed)
     _sep()
-
-    artifacts = [artifact for _, _, artifact in results]
 
     await session_manager.append_turn(
         session_id,
@@ -220,6 +247,20 @@ async def route_and_execute_streaming(
     is_first = len(session_manager.load_session(session_id).get("messages", [])) == 0
 
     plan = await _plan(message, agents)
+
+    # Direct answer — no agent needed
+    if plan.direct_answer:
+        answer = plan.direct_answer
+        await session_manager.append_turn(session_id, user_content=message, assistant_segments=[{
+            "content": answer,
+            "artifacts": [],
+        }])
+        if is_first:
+            title = await _generate_title(message)
+            session_manager.update_title(session_id, title)
+            yield {"type": "title", "session_id": session_id, "title": title}
+        yield {"type": "done", "session_id": session_id, "artifacts": [], "answer": answer}
+        return
 
     if len(plan.tasks) == 0:
         yield {"type": "error", "error": "No agents selected for this query."}
