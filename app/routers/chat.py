@@ -230,7 +230,7 @@ async def route_and_execute(
         user_content=message,
         assistant_segments=[{
             "content": answer,
-            "artifacts": [{"type": a.type} for a in artifacts],
+            "artifacts": [{"type": a.type, "data": a.data} for a in artifacts],
         }],
     )
 
@@ -280,7 +280,7 @@ async def route_and_execute_streaming(
         artifacts = [artifact for _, _, artifact in results]
         await session_manager.append_turn(session_id, user_content=message, assistant_segments=[{
             "content": answer,
-            "artifacts": [{"type": a.type} for a in artifacts],
+            "artifacts": [{"type": a.type, "data": a.data} for a in artifacts],
         }])
         if is_first:
             title = await _generate_title(message)
@@ -325,7 +325,7 @@ async def route_and_execute_streaming(
     artifacts = [artifact] if artifact else []
     await session_manager.append_turn(session_id, user_content=message, assistant_segments=[{
         "content": collected_answer,
-        "artifacts": [{"type": a.type} for a in artifacts],
+        "artifacts": [{"type": a.type, "data": a.data} for a in artifacts],
     }])
 
     if is_first:
