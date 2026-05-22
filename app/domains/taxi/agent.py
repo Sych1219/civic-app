@@ -282,7 +282,7 @@ async def _run_streaming(
         last_streamed_content = streamed_content
 
         if not has_tool_calls:
-            yield {"type": "final", "content": streamed_content, "locations": store.collect()}
+            yield {"type": "final", "content": streamed_content, "locations": store.collect(), "raw": last_raw}
             return
 
         for tc in response.tool_calls:
@@ -312,4 +312,4 @@ async def _run_streaming(
     if not last_streamed_content:
         last_streamed_content = messages[-1].content if hasattr(messages[-1], "content") else ""
         yield {"type": "token", "content": last_streamed_content}
-    yield {"type": "final", "content": last_streamed_content, "locations": store.collect()}
+    yield {"type": "final", "content": last_streamed_content, "locations": store.collect(), "raw": last_raw}

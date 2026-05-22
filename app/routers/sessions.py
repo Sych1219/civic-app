@@ -1,3 +1,5 @@
+import json
+
 from fastapi import APIRouter, HTTPException
 
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
@@ -24,6 +26,15 @@ async def get_session(session_id: str):
 async def delete_session(session_id: str):
     _mgr().delete_session(session_id)
     return {"ok": True}
+
+
+@router.get("/{session_id}/artifacts/{artifact_id}")
+async def get_artifact(session_id: str, artifact_id: str):
+    mgr = _mgr()
+    path = mgr._artifact_path(session_id, artifact_id)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 @router.post("/{session_id}/compress")

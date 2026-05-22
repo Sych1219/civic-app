@@ -281,7 +281,7 @@ async def route_and_execute_streaming(
         results = await _execute(plan, agents)
         answer = await _synthesize(message, results)
         artifacts = [artifact for _, _, artifact in results]
-        await session_manager.append_turn(session_id, user_content=message, assistant_segments=[{
+        saved = await session_manager.append_turn(session_id, user_content=message, assistant_segments=[{
             "content": answer,
             "artifacts": [{"type": a.type, "data": a.data} for a in artifacts],
         }])
@@ -289,9 +289,7 @@ async def route_and_execute_streaming(
             title = await _generate_title(message)
             session_manager.update_title(session_id, title)
             yield {"type": "title", "session_id": session_id, "title": title}
-        yield {"type": "done", "session_id": session_id, "artifacts": [
-            {"type": a.type} for a in artifacts
-        ], "answer": answer}
+        yield {"type": "done", "session_id": session_id, "artifacts": saved, "answer": answer}
         return
 
     task = plan.tasks[0]
@@ -314,7 +312,8 @@ async def route_and_execute_streaming(
             if event.get("type") == "final":
                 collected_answer = event.get("content", "")
                 locations = event.get("locations", {})
-                artifact = Artifact(type="taxi_data", data={"raw": None, "locations": locations})
+                raw = event.get("raw")
+                artifact = Artifact(type="taxi_data", data={"raw": raw, "locations": locations})
             else:
                 yield event
     else:
@@ -326,7 +325,7 @@ async def route_and_execute_streaming(
         yield {"type": "tool_end", "tool": task.agent, "output": collected_answer[:200]}
 
     artifacts = [artifact] if artifact else []
-    await session_manager.append_turn(session_id, user_content=message, assistant_segments=[{
+    saved = await session_manager.append_turn(session_id, user_content=message, assistant_segments=[{
         "content": collected_answer,
         "artifacts": [{"type": a.type, "data": a.data} for a in artifacts],
     }])
@@ -336,6 +335,4 @@ async def route_and_execute_streaming(
         session_manager.update_title(session_id, title)
         yield {"type": "title", "session_id": session_id, "title": title}
 
-    yield {"type": "done", "session_id": session_id, "artifacts": [
-        {"type": a.type} for a in artifacts
-    ], "answer": collected_answer}
+    yield {"type": "done", "session_id": session_id, "artifacts": saved, "answer": collected_answer}
