@@ -3,6 +3,7 @@ name: traffic-cameras
 description: traffic cameras, road conditions, congestion levels, expressway status, incidents
 handler: app.domains.traffic.handler.handle
 supports_request_id: false
+triggers: ["traffic", "camera", "congestion", "expressway", "PIE", "CTE", "AYE", "路况", "堵车", "摄像头"]
 ---
 
 ## Capabilities

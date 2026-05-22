@@ -50,8 +50,15 @@ class Plan(BaseModel):
 
 # ─── Planner ──────────────────────────────────────────────────────────────────
 
-async def _plan(message: str, agents: dict) -> Plan:
-    context_text, matched_agents = build_context_prompt(message)
+async def _plan(
+    message: str,
+    agents: dict,
+    session_id: str = "default",
+    officer_id: Optional[str] = None,
+) -> Plan:
+    context_text, matched_agents = build_context_prompt(
+        message, domains=agents, session_id=session_id, officer_id=officer_id
+    )
 
     # Always expose all registered agents — skill context guides the LLM on when to use each
     agent_list_text = "\n".join(
@@ -202,7 +209,7 @@ async def route_and_execute(
 
     is_first = len(session_manager.load_session(session_id).get("messages", [])) == 0
 
-    plan = await _plan(message, agents)
+    plan = await _plan(message, agents, session_id=session_id, officer_id=officer_id)
 
     if plan.direct_answer:
         answer = plan.direct_answer
@@ -246,7 +253,7 @@ async def route_and_execute_streaming(
 
     is_first = len(session_manager.load_session(session_id).get("messages", [])) == 0
 
-    plan = await _plan(message, agents)
+    plan = await _plan(message, agents, session_id=session_id, officer_id=officer_id)
 
     # Direct answer — no agent needed
     if plan.direct_answer:

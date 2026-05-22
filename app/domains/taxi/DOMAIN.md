@@ -4,6 +4,7 @@ description: taxi availability, counts, distribution, hotspots, historical trend
 handler: app.domains.taxi.handler.handle
 streaming_handler: app.domains.taxi.handler.handle_streaming
 supports_request_id: true
+triggers: ["taxi", "cab", "出租车", "的士", "打车", "grab", "comfort delgro"]
 ---
 
 ## Capabilities

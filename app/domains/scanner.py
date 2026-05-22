@@ -17,6 +17,7 @@ class DomainDef:
     supports_request_id: bool = False
     system_notes: str = ""
     streaming_handler: Optional[Callable] = field(default=None)
+    triggers: list = field(default_factory=list)
 
 
 def _import_fn(dotted_path: str) -> Callable:
@@ -53,8 +54,18 @@ def scan_domains(domains_dir: Path) -> dict[str, DomainDef]:
                 supports_request_id=meta.get("supports_request_id", False),
                 system_notes=body.strip(),
                 streaming_handler=streaming_handler_fn,
+                triggers=meta.get("triggers", []),
             )
             logger.info("[scanner] loaded domain: %s", meta["name"])
         except Exception as exc:
             logger.warning("[scanner] failed to load %s: %s", md_file, exc)
     return domains
+
+
+def match_by_triggers(domains: dict[str, DomainDef], query: str) -> list[str]:
+    """Return domain names whose triggers appear in the query (case-insensitive)."""
+    q = query.lower()
+    return [
+        name for name, defn in domains.items()
+        if any(t.lower() in q for t in defn.triggers)
+    ]

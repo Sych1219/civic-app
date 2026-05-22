@@ -43,9 +43,14 @@ async def lifespan(app: FastAPI):
     logger.info("Loaded %d domains: %s", len(app.state.domains), list(app.state.domains))
 
     # Initialise session manager
-    from app.sessions.manager import _init
-    _sm = _init(Path(__file__).parent.parent / "sessions")
+    from app.sessions.manager import _init as _init_sessions
+    data_dir = Path(os.environ.get("CIVIC_DATA_DIR", "data"))
+    _sm = _init_sessions(data_dir / "sessions")
     logger.info("SessionManager initialised at: %s", _sm.sessions_dir)
+
+    # Initialise file memory manager
+    from app.memory.file_memory import _init as _init_memory
+    _init_memory(data_dir)
 
     yield
 

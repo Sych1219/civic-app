@@ -17,9 +17,9 @@ from app.domains.taxi.tools import (
     find_nearest_taxis,
     get_recent_taxi_activity,
     get_taxi_history,
-    read_file,
     resolve_zone,
 )
+from app.tools.common import read_file
 from app.memory.client import MemoryClient
 from app.memory.events import EventCollector, EventType, collector_var
 from app.memory.injector import build_hint_block
@@ -103,7 +103,7 @@ async def run_taxi_agent(
         last_raw:  Last tool result as a dict.
         locations: Mapping of ref_id → GeoJsonFeatureCollection dict.
     """
-    from app.workspace.officer_manager import officer_manager
+    from app.officers.manager import officer_manager
 
     request_id = request_id or str(uuid.uuid4())
     officer_index = officer_manager.load_index(officer_id)
@@ -229,7 +229,7 @@ async def run_taxi_agent_streaming(
     system_notes: str = "",
     officer_id: Optional[str] = None,
 ) -> AsyncGenerator[dict, None]:
-    from app.workspace.officer_manager import officer_manager
+    from app.officers.manager import officer_manager
 
     officer_index = officer_manager.load_index(officer_id)
     hints_injected = await _registry.get_active_hints("taxi", message)

@@ -25,3 +25,7 @@ dist/
 sessions/
 memory/
 workspace/officers/
+data/sessions/
+data/memory/experience/
+data/officers/
+data/memory/MEMORY.md.audit.log
