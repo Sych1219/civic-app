@@ -258,6 +258,9 @@ async def route_and_execute_streaming(
     # Direct answer — no agent needed
     if plan.direct_answer:
         answer = plan.direct_answer
+        words = answer.split(" ")
+        for i, word in enumerate(words):
+            yield {"type": "token", "content": word if i == 0 else " " + word}
         await session_manager.append_turn(session_id, user_content=message, assistant_segments=[{
             "content": answer,
             "artifacts": [],

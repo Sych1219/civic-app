@@ -260,14 +260,29 @@ async def _run_streaming(
 
     last_raw: Optional[dict] = None
     max_iters = 5
+    last_streamed_content = ""
 
     for iteration in range(1, max_iters + 1):
-        response = await llm_with_tools.ainvoke(messages)
-        messages.append(response)
+        chunks: list = []
+        has_tool_calls = False
+        streamed_content = ""
 
-        if not response.tool_calls:
-            yield {"type": "token", "content": response.content}
-            yield {"type": "final", "content": response.content, "locations": store.collect()}
+        async for chunk in llm_with_tools.astream(messages):
+            chunks.append(chunk)
+            if chunk.tool_call_chunks:
+                has_tool_calls = True
+            if chunk.content and not has_tool_calls:
+                yield {"type": "token", "content": chunk.content}
+                streamed_content += chunk.content
+
+        response = chunks[0]
+        for c in chunks[1:]:
+            response = response + c
+        messages.append(response)
+        last_streamed_content = streamed_content
+
+        if not has_tool_calls:
+            yield {"type": "final", "content": streamed_content, "locations": store.collect()}
             return
 
         for tc in response.tool_calls:
@@ -294,6 +309,7 @@ async def _run_streaming(
 
         yield {"type": "new_response"}
 
-    last_content = messages[-1].content if hasattr(messages[-1], "content") else ""
-    yield {"type": "token", "content": last_content}
-    yield {"type": "final", "content": last_content, "locations": store.collect()}
+    if not last_streamed_content:
+        last_streamed_content = messages[-1].content if hasattr(messages[-1], "content") else ""
+        yield {"type": "token", "content": last_streamed_content}
+    yield {"type": "final", "content": last_streamed_content, "locations": store.collect()}
