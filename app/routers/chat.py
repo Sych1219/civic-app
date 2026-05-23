@@ -14,7 +14,7 @@ import time
 import uuid
 from typing import TYPE_CHECKING, AsyncGenerator, Optional
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel
 
@@ -91,12 +91,20 @@ Rules:
     trace.info("│ Calling LLM to decide routing...")
     _sep()
 
+    from app.sessions.manager import session_manager as _sm
+    history_dicts = _sm.load_session_for_agent(session_id)
+    history_msgs = [
+        HumanMessage(content=m["content"]) if m["role"] == "user" else AIMessage(content=m["content"])
+        for m in history_dicts
+    ]
+
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
     structured = llm.with_structured_output(Plan)
     t0 = time.monotonic()
     try:
         plan = await structured.ainvoke([
             SystemMessage(content=system),
+            *history_msgs,
             HumanMessage(content=message),
         ])
     except Exception as exc:
