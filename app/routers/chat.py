@@ -83,7 +83,8 @@ Registered agents:
 Rules:
 - At most ONE subtask per agent.
 - Only include agents genuinely needed — never force-fit unrelated domains.
-- If the question has nothing to do with any available agent, use option A.{context_section}"""
+- If the question has nothing to do with any available agent, use option A.
+- IMPORTANT: Never use previous answers from conversation history to answer real-time data questions (taxi counts, traffic, live sensor data, etc.). Always dispatch to the relevant agent to fetch fresh data.{context_section}"""
 
     _sep("PLANNER")
     trace.info("│ User query : %s", message)
