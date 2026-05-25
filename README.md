@@ -46,3 +46,20 @@ Other endpoints:
 | ------ | ------------------------- | ------------------------ |
 | GET    | `/api/v1/snapshot/latest` | Latest snapshot metadata |
 | GET    | `/api/v1/health`          | Health check             |
+
+## Data folder structure
+
+```
+data/
+├── memory/
+│   ├── MEMORY.md                   # Agent memory index
+│   └── experience/                 # Accumulated experience entries
+├── officers/                       # Officer profile data
+└── sessions/
+    ├── default.json                # Default session state
+    ├── test.json                   # Test session state
+    ├── archive/                    # Archived session records
+    └── artifacts/
+        ├── default/                # Artifacts for default session (JSON files per interaction)
+        └── test/                   # Artifacts for test session (JSON files per interaction)
+```
