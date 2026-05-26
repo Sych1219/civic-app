@@ -1,0 +1,186 @@
+{
+  "raw": {
+    "type": "spatial_query",
+    "taxi_count": 15,
+    "snapshot_time": "2026-05-26T02:13:44Z",
+    "context": {
+      "type": "zone",
+      "zone_name": "PUNGGOL",
+      "category": "district"
+    },
+    "locations": null,
+    "locations_ref": "8bf92c3a"
+  },
+  "locations": {
+    "8bf92c3a": {
+      "type": "FeatureCollection",
+      "features": [
+        {
+          "type": "Feature",
+          "geometry": {
+            "type": "Point",
+            "coordinates": [
+              103.89662,
+              1.4
+            ]
+          },
+          "properties": {}
+        },
+        {
+          "type": "Feature",
+          "geometry": {
+            "type": "Point",
+            "coordinates": [
+              103.90091,
+              1.4
+            ]
+          },
+          "properties": {}
+        },
+        {
+          "type": "Feature",
+          "geometry": {
+            "type": "Point",
+            "coordinates": [
+              103.90146,
+              1.4
+            ]
+          },
+          "properties": {}
+        },
+        {
+          "type": "Feature",
+          "geometry": {
+            "type": "Point",
+            "coordinates": [
+              103.90379,
+              1.41
+            ]
+          },
+          "properties": {}
+        },
+        {
+          "type": "Feature",
+          "geometry": {
+            "type": "Point",
+            "coordinates": [
+              103.90424,
+              1.4
+            ]
+          },
+          "properties": {}
+        },
+        {
+          "type": "Feature",
+          "geometry": {
+            "type": "Point",
+            "coordinates": [
+              103.90625,
+              1.4
+            ]
+          },
+          "properties": {}
+        },
+        {
+          "type": "Feature",
+          "geometry": {
+            "type": "Point",
+            "coordinates": [
+              103.90817,
+              1.4
+            ]
+          },
+          "properties": {}
+        },
+        {
+          "type": "Feature",
+          "geometry": {
+            "type": "Point",
+            "coordinates": [
+              103.90965,
+              1.4
+            ]
+          },
+          "properties": {}
+        },
+        {
+          "type": "Feature",
+          "geometry": {
+            "type": "Point",
+            "coordinates": [
+              103.9105495065,
+              1.4159787177
+            ]
+          },
+          "properties": {}
+        },
+        {
+          "type": "Feature",
+          "geometry": {
+            "type": "Point",
+            "coordinates": [
+              103.9108,
+              1.4
+            ]
+          },
+          "properties": {}
+        },
+        {
+          "type": "Feature",
+          "geometry": {
+            "type": "Point",
+            "coordinates": [
+              103.91111,
+              1.4
+            ]
+          },
+          "properties": {}
+        },
+        {
+          "type": "Feature",
+          "geometry": {
+            "type": "Point",
+            "coordinates": [
+              103.91116,
+              1.39
+            ]
+          },
+          "properties": {}
+        },
+        {
+          "type": "Feature",
+          "geometry": {
+            "type": "Point",
+            "coordinates": [
+              103.91127,
+              1.42
+            ]
+          },
+          "properties": {}
+        },
+        {
+          "type": "Feature",
+          "geometry": {
+            "type": "Point",
+            "coordinates": [
+              103.9154,
+              1.39336
+            ]
+          },
+          "properties": {}
+        },
+        {
+          "type": "Feature",
+          "geometry": {
+            "type": "Point",
+            "coordinates": [
+              103.91588,
+              1.4
+            ]
+          },
+          "properties": {}
+        }
+      ]
+    }
+  }
+}
