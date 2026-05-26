@@ -1,0 +1,121 @@
+{
+  "raw": {
+    "type": "spatial_query",
+    "taxi_count": 9,
+    "snapshot_time": "2026-05-23T01:00:09Z",
+    "context": {
+      "type": "road",
+      "road_name": "Orchard Road",
+      "category": "road",
+      "buffer_m": 100
+    },
+    "locations": null,
+    "locations_ref": "12405eca"
+  },
+  "locations": {
+    "12405eca": {
+      "type": "FeatureCollection",
+      "features": [
+        {
+          "type": "Feature",
+          "geometry": {
+            "type": "Point",
+            "coordinates": [
+              103.8283136487,
+              1.3066257701
+            ]
+          },
+          "properties": {}
+        },
+        {
+          "type": "Feature",
+          "geometry": {
+            "type": "Point",
+            "coordinates": [
+              103.8283341005,
+              1.3067219693
+            ]
+          },
+          "properties": {}
+        },
+        {
+          "type": "Feature",
+          "geometry": {
+            "type": "Point",
+            "coordinates": [
+              103.8314819,
+              1.30520448333333
+            ]
+          },
+          "properties": {}
+        },
+        {
+          "type": "Feature",
+          "geometry": {
+            "type": "Point",
+            "coordinates": [
+              103.83338,
+              1.3038
+            ]
+          },
+          "properties": {}
+        },
+        {
+          "type": "Feature",
+          "geometry": {
+            "type": "Point",
+            "coordinates": [
+              103.83795,
+              1.30178
+            ]
+          },
+          "properties": {}
+        },
+        {
+          "type": "Feature",
+          "geometry": {
+            "type": "Point",
+            "coordinates": [
+              103.84252,
+              1.30013
+            ]
+          },
+          "properties": {}
+        },
+        {
+          "type": "Feature",
+          "geometry": {
+            "type": "Point",
+            "coordinates": [
+              103.847600633333,
+              1.29866898333333
+            ]
+          },
+          "properties": {}
+        },
+        {
+          "type": "Feature",
+          "geometry": {
+            "type": "Point",
+            "coordinates": [
+              103.8490142673,
+              1.2971191232
+            ]
+          },
+          "properties": {}
+        },
+        {
+          "type": "Feature",
+          "geometry": {
+            "type": "Point",
+            "coordinates": [
+              103.8490146026,
+              1.297118788
+            ]
+          },
+          "properties": {}
+        }
+      ]
+    }
+  }
+}

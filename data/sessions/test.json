@@ -1,0 +1,51 @@
+{
+  "session_id": "test",
+  "title": "Simple Math Question: 2+2",
+  "created_at": 1779412034.173551,
+  "updated_at": 1779412506.380064,
+  "compressed_context": null,
+  "messages": [
+    {
+      "role": "user",
+      "content": "what is 2+2?",
+      "ts": 1779412034.173553
+    },
+    {
+      "role": "assistant",
+      "content": "2 + 2 equals 4.",
+      "artifacts": [],
+      "ts": 1779412034.173553
+    },
+    {
+      "role": "user",
+      "content": "how many cabs near Dhoby Ghaut?",
+      "ts": 1779412087.5315142
+    },
+    {
+      "role": "assistant",
+      "content": "There are currently 75 taxis available near Dhoby Ghaut.",
+      "artifacts": [
+        {
+          "type": "taxi_data"
+        }
+      ],
+      "ts": 1779412087.5315142
+    },
+    {
+      "role": "user",
+      "content": "how many cabs near Dhoby Ghaut?",
+      "ts": 1779412506.380064
+    },
+    {
+      "role": "assistant",
+      "content": "There are currently 75 taxis available near Dhoby Ghaut.",
+      "artifacts": [
+        {
+          "type": "taxi_data",
+          "artifact_id": "9865aafb-19b8-4089-926a-5f1161797cc3"
+        }
+      ],
+      "ts": 1779412506.380064
+    }
+  ]
+}

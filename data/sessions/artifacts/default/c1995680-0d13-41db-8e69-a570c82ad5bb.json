@@ -1,0 +1,158 @@
+{
+  "view_type": "corridor",
+  "cameras": [
+    {
+      "cameraId": 1706,
+      "locationName": null,
+      "latitude": 1.38861,
+      "longitude": 103.85806,
+      "latestImage": "https://images.data.gov.sg/api/traffic-images/2026/05/54ce49e4-8894-4de4-afc7-ef4e895fd55c.jpg",
+      "timestamp": "2026-05-22T02:21:11Z",
+      "resolution": "HD",
+      "analysis": {
+        "congestion": "free_flow",
+        "vehicleDensity": "normal",
+        "incidents": "none",
+        "weather": "clear",
+        "roadSurface": "dry",
+        "summary": "The traffic is flowing freely with a normal density of vehicles on a clear and dry road."
+      }
+    },
+    {
+      "cameraId": 1707,
+      "locationName": null,
+      "latitude": 1.28036584335876,
+      "longitude": 103.830451146503,
+      "latestImage": "https://images.data.gov.sg/api/traffic-images/2026/05/ee9c2600-1f02-4d22-9dfc-6ea373a89081.jpg",
+      "timestamp": "2026-05-22T02:21:11Z",
+      "resolution": "HD",
+      "analysis": {
+        "congestion": "free_flow",
+        "vehicleDensity": "sparse",
+        "incidents": "none",
+        "weather": "clear",
+        "roadSurface": "dry",
+        "summary": "The traffic is flowing freely with few vehicles on the road."
+      }
+    },
+    {
+      "cameraId": 1709,
+      "locationName": null,
+      "latitude": 1.31384231654635,
+      "longitude": 103.845603032574,
+      "latestImage": "https://images.data.gov.sg/api/traffic-images/2026/05/724dffce-c893-4b22-9bf4-794f72a3b54c.jpg",
+      "timestamp": "2026-05-22T02:21:11Z",
+      "resolution": "HD",
+      "analysis": {
+        "congestion": "free_flow",
+        "vehicleDensity": "normal",
+        "incidents": "none",
+        "weather": "clear",
+        "roadSurface": "dry",
+        "summary": "Traffic is flowing smoothly with a normal density of vehicles on the expressway."
+      }
+    },
+    {
+      "cameraId": 1703,
+      "locationName": null,
+      "latitude": 1.32814722194857,
+      "longitude": 103.862203282048,
+      "latestImage": "https://images.data.gov.sg/api/traffic-images/2026/05/119d55f3-6223-4601-95ce-6932f20560dd.jpg",
+      "timestamp": "2026-05-22T02:21:11Z",
+      "resolution": "HD",
+      "analysis": {
+        "congestion": "free_flow",
+        "vehicleDensity": "normal",
+        "incidents": "none",
+        "weather": "clear",
+        "roadSurface": "dry",
+        "summary": "Traffic is flowing smoothly with a normal density of vehicles on the expressway."
+      }
+    },
+    {
+      "cameraId": 1704,
+      "locationName": null,
+      "latitude": 1.28569398886979,
+      "longitude": 103.837524510188,
+      "latestImage": "https://images.data.gov.sg/api/traffic-images/2026/05/5e35e0f6-7372-4853-b205-8ac094ca56cc.jpg",
+      "timestamp": "2026-05-22T02:21:11Z",
+      "resolution": "HD",
+      "analysis": {
+        "congestion": "free_flow",
+        "vehicleDensity": "normal",
+        "incidents": "none",
+        "weather": "clear",
+        "roadSurface": "dry",
+        "summary": "Traffic is flowing smoothly with a normal density of vehicles on the expressway."
+      }
+    },
+    {
+      "cameraId": 1705,
+      "locationName": null,
+      "latitude": 1.375925022,
+      "longitude": 103.8587986,
+      "latestImage": "https://images.data.gov.sg/api/traffic-images/2026/05/7f9058d3-bdce-46d2-be20-53c250972c88.jpg",
+      "timestamp": "2026-05-22T02:21:11Z",
+      "resolution": "HD",
+      "analysis": {
+        "congestion": "light",
+        "vehicleDensity": "normal",
+        "incidents": "none",
+        "weather": "clear",
+        "roadSurface": "dry",
+        "summary": "Traffic is flowing smoothly with a normal density of vehicles on the CTE."
+      }
+    },
+    {
+      "cameraId": 1701,
+      "locationName": null,
+      "latitude": 1.323604823,
+      "longitude": 103.8587802,
+      "latestImage": "https://images.data.gov.sg/api/traffic-images/2026/05/c5936e2d-47a6-4796-8091-1ba84a5f2391.jpg",
+      "timestamp": "2026-05-22T02:21:11Z",
+      "resolution": "HD",
+      "analysis": {
+        "congestion": "free_flow",
+        "vehicleDensity": "normal",
+        "incidents": "none",
+        "weather": "clear",
+        "roadSurface": "dry",
+        "summary": "Traffic is flowing smoothly with a normal density of vehicles on a clear and dry road."
+      }
+    },
+    {
+      "cameraId": 1702,
+      "locationName": null,
+      "latitude": 1.34355015,
+      "longitude": 103.8601984,
+      "latestImage": "https://images.data.gov.sg/api/traffic-images/2026/05/b1bd4a7e-e717-4020-8013-c325f790773a.jpg",
+      "timestamp": "2026-05-22T02:21:11Z",
+      "resolution": "HD",
+      "analysis": {
+        "congestion": "light",
+        "vehicleDensity": "normal",
+        "incidents": "none",
+        "weather": "clear",
+        "roadSurface": "dry",
+        "summary": "Traffic is flowing smoothly with a normal density of vehicles on the expressway."
+      }
+    },
+    {
+      "cameraId": 1711,
+      "locationName": null,
+      "latitude": 1.35296,
+      "longitude": 103.85719,
+      "latestImage": "https://images.data.gov.sg/api/traffic-images/2026/05/0d188a99-22d6-4683-b590-19cc97c3df6e.jpg",
+      "timestamp": "2026-05-22T02:21:11Z",
+      "resolution": "HD",
+      "analysis": {
+        "congestion": "moderate",
+        "vehicleDensity": "normal",
+        "incidents": "none",
+        "weather": "clear",
+        "roadSurface": "dry",
+        "summary": "Traffic is moving at a moderate pace with a normal density of vehicles on the expressway."
+      }
+    }
+  ]
+}

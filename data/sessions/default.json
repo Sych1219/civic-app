@@ -1,0 +1,166 @@
+{
+  "session_id": "default",
+  "title": "Testing Query Response",
+  "created_at": 1779412704.176508,
+  "updated_at": 1779539998.7303958,
+  "compressed_context": null,
+  "messages": [
+    {
+      "role": "user",
+      "content": "test",
+      "ts": 1779412704.1765099
+    },
+    {
+      "role": "assistant",
+      "content": "This is a test response.",
+      "artifacts": [],
+      "ts": 1779412704.1765099
+    },
+    {
+      "role": "user",
+      "content": "i am sun yichun, who are you",
+      "ts": 1779499704.682883
+    },
+    {
+      "role": "assistant",
+      "content": "I am an intelligent routing assistant here to help you with questions related to taxi availability and traffic conditions.",
+      "artifacts": [],
+      "ts": 1779499704.682883
+    },
+    {
+      "role": "user",
+      "content": "How many taxis in Punggol?",
+      "ts": 1779499718.112045
+    },
+    {
+      "role": "assistant",
+      "content": "There are currently 23 taxis available in the Punggol area.",
+      "artifacts": [
+        {
+          "type": "taxi_data",
+          "artifact_id": "c80b9fea-f1c6-4648-90e3-030f4c609ae3"
+        }
+      ],
+      "ts": 1779499718.112045
+    },
+    {
+      "role": "user",
+      "content": "who am I?",
+      "ts": 1779499743.2700968
+    },
+    {
+      "role": "assistant",
+      "content": "You are Sun Yichun.",
+      "artifacts": [],
+      "ts": 1779499743.2700968
+    },
+    {
+      "role": "user",
+      "content": "have I aske punggo area taxi counts?",
+      "ts": 1779499772.347938
+    },
+    {
+      "role": "assistant",
+      "content": "Yes, you asked about the number of taxis in the Punggol area.",
+      "artifacts": [],
+      "ts": 1779499772.347938
+    },
+    {
+      "role": "user",
+      "content": "How many taxis in Punggol?",
+      "ts": 1779501448.666649
+    },
+    {
+      "role": "assistant",
+      "content": "There are currently 23 taxis available in the Punggol area.",
+      "artifacts": [],
+      "ts": 1779501448.666649
+    },
+    {
+      "role": "user",
+      "content": "How many taxis in Punggol?",
+      "ts": 1779501460.9362402
+    },
+    {
+      "role": "assistant",
+      "content": "I currently do not have access to real-time data to provide the exact number of taxis in Punggol. Please check a local taxi service app or website for the most accurate information.",
+      "artifacts": [],
+      "ts": 1779501460.9362402
+    },
+    {
+      "role": "user",
+      "content": "How many taxis in Punggol?",
+      "ts": 1779501563.669696
+    },
+    {
+      "role": "assistant",
+      "content": "There are currently 19 taxis available near Punggol.",
+      "artifacts": [
+        {
+          "type": "taxi_data",
+          "artifact_id": "f662f265-dd77-4664-9ab4-fe016913f684"
+        }
+      ],
+      "ts": 1779501563.669696
+    },
+    {
+      "role": "user",
+      "content": "Is CTE jammed?",
+      "ts": 1779501578.085176
+    },
+    {
+      "role": "assistant",
+      "content": "The CTE is currently not congested. Traffic is flowing smoothly with a normal density of vehicles across multiple cameras, and there are no incidents reported.",
+      "artifacts": [
+        {
+          "type": "traffic_cameras",
+          "artifact_id": "2d4b30c5-8368-40b8-8f01-dd812eb300c4"
+        }
+      ],
+      "ts": 1779501578.085176
+    },
+    {
+      "role": "user",
+      "content": "How many taxis in Punggol?",
+      "ts": 1779539389.951148
+    },
+    {
+      "role": "assistant",
+      "content": "I currently do not have access to real-time data to provide the exact number of taxis in Punggol. Please check a local taxi service app or website for the most accurate information.",
+      "artifacts": [],
+      "ts": 1779539389.951148
+    },
+    {
+      "role": "user",
+      "content": "How many taxis in Punggol?",
+      "ts": 1779539944.553493
+    },
+    {
+      "role": "assistant",
+      "content": "There are currently 32 taxis in Punggol.",
+      "artifacts": [
+        {
+          "type": "taxi_data",
+          "artifact_id": "fa4e391e-0356-4d1f-a936-7228002406c0"
+        }
+      ],
+      "ts": 1779539944.553493
+    },
+    {
+      "role": "user",
+      "content": "how many taxi near waterway point 5km",
+      "ts": 1779539998.7303958
+    },
+    {
+      "role": "assistant",
+      "content": "There are currently 222 taxis available within a 5 km radius of Waterway Point.",
+      "artifacts": [
+        {
+          "type": "taxi_data",
+          "artifact_id": "6d1a102b-d72f-4099-8211-e6b4d02a5ac0"
+        }
+      ],
+      "ts": 1779539998.7303958
+    }
+  ]
+}

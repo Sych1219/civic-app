@@ -22,10 +22,6 @@ dist/
 .vscode/
 
 # Runtime data (generated, not committed)
-sessions/
-memory/
-workspace/officers/
-data/sessions/
-data/memory/experience/
-data/officers/
-data/memory/MEMORY.md.audit.log
+/sessions/
+/memory/
+/workspace/officers/
