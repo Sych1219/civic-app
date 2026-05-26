@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import time
 import uuid
 from datetime import datetime, timezone, timedelta
 from typing import AsyncGenerator, Optional
@@ -25,6 +26,7 @@ from app.memory.events import EventCollector, EventType, collector_var
 from app.memory.injector import build_hint_block
 from app.memory.pipeline import post_request_pipeline
 from app.memory.registry import HintRegistry
+from app.utils.raw_capture import serialize_messages
 
 logger = logging.getLogger(__name__)
 trace = logging.getLogger("trace")
@@ -261,6 +263,7 @@ async def _run_streaming(
     last_raw: Optional[dict] = None
     max_iters = 5
     last_streamed_content = ""
+    t0_agent = time.monotonic()
 
     for iteration in range(1, max_iters + 1):
         chunks: list = []
@@ -282,6 +285,17 @@ async def _run_streaming(
         last_streamed_content = streamed_content
 
         if not has_tool_calls:
+            duration_ms = int((time.monotonic() - t0_agent) * 1000)
+            yield {
+                "type": "llm_call",
+                "call": {
+                    "phase": "agent",
+                    "model": "gpt-4o-mini",
+                    "temperature": 0,
+                    "duration_ms": duration_ms,
+                    "messages": serialize_messages(messages),
+                },
+            }
             yield {"type": "final", "content": streamed_content, "locations": store.collect(), "raw": last_raw}
             return
 

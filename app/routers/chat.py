@@ -20,6 +20,7 @@ from pydantic import BaseModel
 
 from app.models import Artifact, ChatResponse
 from app.memory.context_loader import build_context_prompt
+from app.utils.raw_capture import serialize_messages
 
 if TYPE_CHECKING:
     from app.domains.scanner import DomainDef
@@ -55,7 +56,7 @@ async def _plan(
     agents: dict,
     session_id: str = "default",
     officer_id: Optional[str] = None,
-) -> Plan:
+) -> tuple[Plan, dict]:
     context_text, matched_agents = build_context_prompt(
         message, domains=agents, session_id=session_id, officer_id=officer_id
     )
@@ -99,15 +100,13 @@ Rules:
         for m in history_dicts
     ]
 
+    input_msgs = [SystemMessage(content=system), *history_msgs, HumanMessage(content=message)]
+
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
     structured = llm.with_structured_output(Plan)
     t0 = time.monotonic()
     try:
-        plan = await structured.ainvoke([
-            SystemMessage(content=system),
-            *history_msgs,
-            HumanMessage(content=message),
-        ])
+        plan = await structured.ainvoke(input_msgs)
     except Exception as exc:
         _sep("PLAN FAILED")
         trace.info("│ LLM planning call raised: %s: %s", type(exc).__name__, exc)
@@ -124,7 +123,16 @@ Rules:
         for i, task in enumerate(plan.tasks, 1):
             trace.info("│  Step %d: agent=%s  question=%s", i, task.agent, task.question)
     _sep()
-    return plan
+
+    llm_call = {
+        "phase": "planner",
+        "model": "gpt-4o-mini",
+        "temperature": 0,
+        "duration_ms": int(elapsed * 1000),
+        "messages": serialize_messages(input_msgs, history_count=len(history_msgs)),
+        "output_structured": plan.model_dump(),
+    }
+    return plan, llm_call
 
 
 # ─── Executor ─────────────────────────────────────────────────────────────────
@@ -161,12 +169,18 @@ async def _execute(plan: Plan, agents: dict) -> list[tuple[str, str, Artifact]]:
 
 # ─── Synthesizer ──────────────────────────────────────────────────────────────
 
-async def _synthesize(original_question: str, results: list[tuple[str, str, Artifact]]) -> str:
+async def _synthesize(original_question: str, results: list[tuple[str, str, Artifact]]) -> tuple[str, dict]:
     _sep("SYNTHESIZER")
     if len(results) == 1:
         trace.info("│ Single result — no synthesis needed, returning directly.")
         _sep()
-        return results[0][1]
+        skipped_call = {
+            "phase": "synthesizer",
+            "model": "gpt-4o-mini",
+            "messages": [],
+            "skipped_reason": "single agent result — synthesizer not invoked",
+        }
+        return results[0][1], skipped_call
 
     trace.info("│ Combining %d domain answers into one response:", len(results))
     for agent, answer, _ in results:
@@ -182,23 +196,48 @@ async def _synthesize(original_question: str, results: list[tuple[str, str, Arti
         "into one coherent, concise response that directly addresses the user's original question. "
         "Highlight any correlations or insights that span multiple domains."
     )
-    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
-    response = await llm.ainvoke([
+    input_msgs = [
         SystemMessage(content=system),
         HumanMessage(content=f"Original question: {original_question}\n\n{parts}"),
-    ])
-    return response.content
+    ]
+    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+    t0 = time.monotonic()
+    response = await llm.ainvoke(input_msgs)
+    elapsed = time.monotonic() - t0
+
+    llm_call = {
+        "phase": "synthesizer",
+        "model": "gpt-4o-mini",
+        "temperature": 0,
+        "duration_ms": int(elapsed * 1000),
+        "messages": serialize_messages(input_msgs),
+        "output": response.content,
+    }
+    return response.content, llm_call
 
 
 # ─── Title generator ─────────────────────────────────────────────────────────
 
-async def _generate_title(message: str) -> str:
-    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
-    resp = await llm.ainvoke([
+async def _generate_title(message: str) -> tuple[str, dict]:
+    input_msgs = [
         SystemMessage(content="Generate a concise title (≤8 words) for the following user query. Output the title only, no quotes."),
         HumanMessage(content=message),
-    ])
-    return resp.content.strip()
+    ]
+    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+    t0 = time.monotonic()
+    resp = await llm.ainvoke(input_msgs)
+    elapsed = time.monotonic() - t0
+    title = resp.content.strip()
+
+    llm_call = {
+        "phase": "title",
+        "model": "gpt-4o-mini",
+        "temperature": 0,
+        "duration_ms": int(elapsed * 1000),
+        "messages": serialize_messages(input_msgs),
+        "output": title,
+    }
+    return title, llm_call
 
 
 # ─── Public entry point (non-streaming) ──────────────────────────────────────
@@ -218,14 +257,14 @@ async def route_and_execute(
 
     is_first = len(session_manager.load_session(session_id).get("messages", [])) == 0
 
-    plan = await _plan(message, agents, session_id=session_id, officer_id=officer_id)
+    plan, _ = await _plan(message, agents, session_id=session_id, officer_id=officer_id)
 
     if plan.direct_answer:
         answer = plan.direct_answer
         artifacts: list[Artifact] = []
     else:
         results = await _execute(plan, agents)
-        answer = await _synthesize(message, results)
+        answer, _ = await _synthesize(message, results)
         artifacts = [artifact for _, _, artifact in results]
 
     elapsed = time.monotonic() - t_start
@@ -244,7 +283,7 @@ async def route_and_execute(
     )
 
     if is_first:
-        title = await _generate_title(message)
+        title, _ = await _generate_title(message)
         session_manager.update_title(session_id, title)
 
     return ChatResponse(answer=answer, artifacts=artifacts)
@@ -262,7 +301,8 @@ async def route_and_execute_streaming(
 
     is_first = len(session_manager.load_session(session_id).get("messages", [])) == 0
 
-    plan = await _plan(message, agents, session_id=session_id, officer_id=officer_id)
+    plan, planner_call = await _plan(message, agents, session_id=session_id, officer_id=officer_id)
+    yield {"type": "llm_call", "call": planner_call}
 
     # Direct answer — no agent needed
     if plan.direct_answer:
@@ -275,8 +315,9 @@ async def route_and_execute_streaming(
             "artifacts": [],
         }])
         if is_first:
-            title = await _generate_title(message)
+            title, title_call = await _generate_title(message)
             session_manager.update_title(session_id, title)
+            yield {"type": "llm_call", "call": title_call}
             yield {"type": "title", "session_id": session_id, "title": title}
         yield {"type": "done", "session_id": session_id, "artifacts": [], "answer": answer}
         return
@@ -288,15 +329,17 @@ async def route_and_execute_streaming(
     # For multi-task plans, fall back to non-streaming execution
     if len(plan.tasks) > 1:
         results = await _execute(plan, agents)
-        answer = await _synthesize(message, results)
+        answer, synth_call = await _synthesize(message, results)
+        yield {"type": "llm_call", "call": synth_call}
         artifacts = [artifact for _, _, artifact in results]
         saved = await session_manager.append_turn(session_id, user_content=message, assistant_segments=[{
             "content": answer,
             "artifacts": [{"type": a.type, "data": a.data} for a in artifacts],
         }])
         if is_first:
-            title = await _generate_title(message)
+            title, title_call = await _generate_title(message)
             session_manager.update_title(session_id, title)
+            yield {"type": "llm_call", "call": title_call}
             yield {"type": "title", "session_id": session_id, "title": title}
         yield {"type": "done", "session_id": session_id, "artifacts": saved, "answer": answer}
         return
@@ -323,6 +366,11 @@ async def route_and_execute_streaming(
                 locations = event.get("locations", {})
                 raw = event.get("raw")
                 artifact = Artifact(type="taxi_data", data={"raw": raw, "locations": locations})
+            elif event.get("type") == "llm_call":
+                # Agent emitted its own llm_call capture — tag with agent name and forward
+                call = event["call"]
+                call["agent"] = task.agent
+                yield {"type": "llm_call", "call": call}
             else:
                 yield event
     else:
@@ -339,9 +387,14 @@ async def route_and_execute_streaming(
         "artifacts": [{"type": a.type, "data": a.data} for a in artifacts],
     }])
 
+    # Single-agent synthesizer skipped — emit skipped call for completeness
+    _, synth_call = await _synthesize(message, [(task.agent, collected_answer, artifacts[0] if artifacts else Artifact(type="error", data={}))])
+    yield {"type": "llm_call", "call": synth_call}
+
     if is_first:
-        title = await _generate_title(message)
+        title, title_call = await _generate_title(message)
         session_manager.update_title(session_id, title)
+        yield {"type": "llm_call", "call": title_call}
         yield {"type": "title", "session_id": session_id, "title": title}
 
     yield {"type": "done", "session_id": session_id, "artifacts": saved, "answer": collected_answer}

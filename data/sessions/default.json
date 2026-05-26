@@ -2,7 +2,7 @@
   "session_id": "default",
   "title": "Testing Query Response",
   "created_at": 1779412704.176508,
-  "updated_at": 1779762072.906765,
+  "updated_at": 1779778372.3706298,
   "compressed_context": null,
   "messages": [
     {
@@ -177,6 +177,38 @@
         }
       ],
       "ts": 1779762072.906765
+    },
+    {
+      "role": "user",
+      "content": "How many taxis in Punggol?",
+      "ts": 1779777296.805718
+    },
+    {
+      "role": "assistant",
+      "content": "There are currently 42 taxis available in the Punggol area.",
+      "artifacts": [
+        {
+          "type": "taxi_data",
+          "artifact_id": "71c35856-fd33-4a3e-8da4-558d728d760a"
+        }
+      ],
+      "ts": 1779777296.805718
+    },
+    {
+      "role": "user",
+      "content": "How many taxis in Punggol?",
+      "ts": 1779778372.3706298
+    },
+    {
+      "role": "assistant",
+      "content": "There are currently 45 taxis in Punggol.",
+      "artifacts": [
+        {
+          "type": "taxi_data",
+          "artifact_id": "c7fd228c-1346-409b-a1f7-ce6ebf66f381"
+        }
+      ],
+      "ts": 1779778372.3706298
     }
   ]
 }
