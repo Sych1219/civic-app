@@ -46,12 +46,17 @@ class MemoryClient:
             resp.raise_for_status()
             return resp.json()["data"]
 
-    async def insert_hint(self, agent: str, body: str, embedding: list[float]) -> str:
-        resp_data = await self._post("/hints", {
+    async def insert_hint(
+        self, agent: str, body: str, embedding: list[float], status: str = "pending"
+    ) -> str:
+        payload: dict = {
             "agent":         agent,
             "body":          body,
             "embeddingJson": json.dumps(embedding),
-        })
+        }
+        if status != "pending":
+            payload["status"] = status
+        resp_data = await self._post("/hints", payload)
         return resp_data["id"]
 
     async def update_hint(self, hint_id: str, **fields) -> None:

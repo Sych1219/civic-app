@@ -11,7 +11,7 @@ if TYPE_CHECKING:
     from app.domains.scanner import DomainDef
 
 
-def build_context_prompt(
+async def build_context_prompt(
     message: str,
     domains: Optional[dict] = None,
     session_id: str = "default",
@@ -22,9 +22,6 @@ def build_context_prompt(
 
     Returns:
         (context_text, matched_domain_names)
-
-    Phase 0 stub — returns ("", []).
-    Full implementation in Phase 4.
     """
     if domains is None:
         return "", []
@@ -41,10 +38,13 @@ def build_context_prompt(
         if domains[name].system_notes
     )
 
-    # Memory index
+    # Memory index with semantic filtering
+    memory_index = ""
     try:
         from app.memory.file_memory import file_memory_manager
-        memory_index = file_memory_manager.read_index()
+        from app.memory.embedder import embed
+        query_emb = await embed(message)
+        memory_index = file_memory_manager.read_index(query_emb=query_emb)
     except Exception:
         memory_index = ""
 

@@ -2,7 +2,7 @@
   "session_id": "default",
   "title": "Testing Query Response",
   "created_at": 1779412704.176508,
-  "updated_at": 1779778372.3706298,
+  "updated_at": 1780386276.252933,
   "compressed_context": null,
   "messages": [
     {
@@ -209,6 +209,126 @@
         }
       ],
       "ts": 1779778372.3706298
+    },
+    {
+      "role": "user",
+      "content": "how many taxis in tpe",
+      "ts": 1780385174.866519
+    },
+    {
+      "role": "assistant",
+      "content": "There are currently 51 taxis near the Tampines Expressway (TPE).",
+      "artifacts": [
+        {
+          "type": "taxi_data",
+          "artifact_id": "02ffe44d-48d0-490c-a37a-a1322ccab4f4"
+        }
+      ],
+      "ts": 1780385174.866519,
+      "feedback": {
+        "rating": "up",
+        "comment": null
+      }
+    },
+    {
+      "role": "user",
+      "content": "how many taxis around pie",
+      "ts": 1780385237.341707
+    },
+    {
+      "role": "assistant",
+      "content": "There are currently 102 taxis available around the Pan Island Expressway (PIE).",
+      "artifacts": [
+        {
+          "type": "taxi_data",
+          "artifact_id": "71a96aac-dd7e-4e75-bac0-cf120aa37058"
+        }
+      ],
+      "ts": 1780385237.341707,
+      "feedback": {
+        "rating": "down",
+        "comment": "当用户问到 PIE 的时候，其实这是一个缩写，你应该把它转换成 Pie Island Express 然后去搜索，这样工具调用就不会失败"
+      }
+    },
+    {
+      "role": "user",
+      "content": "taxis around pie?",
+      "ts": 1780385461.209245
+    },
+    {
+      "role": "assistant",
+      "content": "There are currently 102 taxis available around the Pan Island Expressway (PIE).",
+      "artifacts": [
+        {
+          "type": "taxi_data",
+          "artifact_id": "0585d41f-fced-44ec-9244-36a8ad234a33"
+        }
+      ],
+      "ts": 1780385461.209245,
+      "feedback": null
+    },
+    {
+      "role": "user",
+      "content": "taxis around pie?",
+      "ts": 1780385994.1978948
+    },
+    {
+      "role": "assistant",
+      "content": "There are currently 102 taxis available around the Pan Island Expressway (PIE).",
+      "artifacts": [],
+      "ts": 1780385994.1978948,
+      "feedback": null
+    },
+    {
+      "role": "user",
+      "content": "pie how many taxi, need the latest data",
+      "ts": 1780386056.63775
+    },
+    {
+      "role": "assistant",
+      "content": "There are currently 104 taxis around the Pan Island Expressway (PIE).",
+      "artifacts": [
+        {
+          "type": "taxi_data",
+          "artifact_id": "cfee7f65-7969-40ce-8f20-652025edbba4"
+        }
+      ],
+      "ts": 1780386056.63775,
+      "feedback": null
+    },
+    {
+      "role": "user",
+      "content": "pie how many taxi, need the latest data again",
+      "ts": 1780386220.424408
+    },
+    {
+      "role": "assistant",
+      "content": "There are currently 104 taxis around the Pan Island Expressway (PIE).",
+      "artifacts": [
+        {
+          "type": "taxi_data",
+          "artifact_id": "7ead1302-bdc7-4ecc-a5f6-83d4260e0b7b"
+        }
+      ],
+      "ts": 1780386220.424408,
+      "feedback": null
+    },
+    {
+      "role": "user",
+      "content": "how many cars on aye",
+      "ts": 1780386276.252933
+    },
+    {
+      "role": "assistant",
+      "content": "The current traffic condition on the Ayer Rajah Expressway (AYE) is generally free-flowing. Camera 4799 shows sparse vehicle density with no incidents, while Camera 4798 indicates a normal density of vehicles, also with clear weather and dry road surfaces. Overall, traffic is moving smoothly.",
+      "artifacts": [
+        {
+          "type": "traffic_cameras",
+          "artifact_id": "657cbad0-13d5-44ec-8043-858ae158930b"
+        }
+      ],
+      "ts": 1780386276.252933,
+      "feedback": null
     }
   ]
 }

@@ -57,7 +57,7 @@ async def _plan(
     session_id: str = "default",
     officer_id: Optional[str] = None,
 ) -> tuple[Plan, dict]:
-    context_text, matched_agents = build_context_prompt(
+    context_text, matched_agents = await build_context_prompt(
         message, domains=agents, session_id=session_id, officer_id=officer_id
     )
 
@@ -280,7 +280,7 @@ async def route_and_execute(
             "content": answer,
             "artifacts": [{"type": a.type, "data": a.data} for a in artifacts],
         }],
-    )
+    )  # return value (artifacts, msg_index) unused in non-streaming path
 
     if is_first:
         title, _ = await _generate_title(message)
@@ -310,7 +310,7 @@ async def route_and_execute_streaming(
         words = answer.split(" ")
         for i, word in enumerate(words):
             yield {"type": "token", "content": word if i == 0 else " " + word}
-        await session_manager.append_turn(session_id, user_content=message, assistant_segments=[{
+        _, direct_msg_index = await session_manager.append_turn(session_id, user_content=message, assistant_segments=[{
             "content": answer,
             "artifacts": [],
         }])
@@ -319,7 +319,7 @@ async def route_and_execute_streaming(
             session_manager.update_title(session_id, title)
             yield {"type": "llm_call", "call": title_call}
             yield {"type": "title", "session_id": session_id, "title": title}
-        yield {"type": "done", "session_id": session_id, "artifacts": [], "answer": answer}
+        yield {"type": "done", "session_id": session_id, "msg_index": direct_msg_index, "artifacts": [], "answer": answer}
         return
 
     if len(plan.tasks) == 0:
@@ -332,7 +332,7 @@ async def route_and_execute_streaming(
         answer, synth_call = await _synthesize(message, results)
         yield {"type": "llm_call", "call": synth_call}
         artifacts = [artifact for _, _, artifact in results]
-        saved = await session_manager.append_turn(session_id, user_content=message, assistant_segments=[{
+        saved, multi_msg_index = await session_manager.append_turn(session_id, user_content=message, assistant_segments=[{
             "content": answer,
             "artifacts": [{"type": a.type, "data": a.data} for a in artifacts],
         }])
@@ -341,7 +341,7 @@ async def route_and_execute_streaming(
             session_manager.update_title(session_id, title)
             yield {"type": "llm_call", "call": title_call}
             yield {"type": "title", "session_id": session_id, "title": title}
-        yield {"type": "done", "session_id": session_id, "artifacts": saved, "answer": answer}
+        yield {"type": "done", "session_id": session_id, "msg_index": multi_msg_index, "artifacts": saved, "answer": answer}
         return
 
     task = plan.tasks[0]
@@ -382,7 +382,7 @@ async def route_and_execute_streaming(
         yield {"type": "tool_end", "tool": task.agent, "output": collected_answer[:200]}
 
     artifacts = [artifact] if artifact else []
-    saved = await session_manager.append_turn(session_id, user_content=message, assistant_segments=[{
+    saved, single_msg_index = await session_manager.append_turn(session_id, user_content=message, assistant_segments=[{
         "content": collected_answer,
         "artifacts": [{"type": a.type, "data": a.data} for a in artifacts],
     }])
@@ -397,4 +397,4 @@ async def route_and_execute_streaming(
         yield {"type": "llm_call", "call": title_call}
         yield {"type": "title", "session_id": session_id, "title": title}
 
-    yield {"type": "done", "session_id": session_id, "artifacts": saved, "answer": collected_answer}
+    yield {"type": "done", "session_id": session_id, "msg_index": single_msg_index, "artifacts": saved, "answer": collected_answer}

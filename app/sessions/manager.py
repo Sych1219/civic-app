@@ -132,13 +132,18 @@ class SessionManager:
         session_id: str,
         user_content: str,
         assistant_segments: list[dict],
-    ) -> list[dict]:
-        """Persist turn and return saved artifact records [{type, artifact_id}, ...]."""
+    ) -> tuple[list[dict], int]:
+        """Persist turn and return (artifact records, assistant_msg_index).
+
+        artifact records: [{type, artifact_id}, ...]
+        assistant_msg_index: 0-based index of the last assistant message in the session messages list
+        """
         data = self._load_raw(session_id)
         now = time.time()
 
         data["messages"].append({"role": "user", "content": user_content, "ts": now})
         all_artifacts: list[dict] = []
+        last_assistant_idx = -1
         for seg in assistant_segments:
             saved_artifacts = []
             for art in seg.get("artifacts", []):
@@ -152,7 +157,9 @@ class SessionManager:
                 "content": seg.get("content", ""),
                 "artifacts": saved_artifacts,
                 "ts": now,
+                "feedback": None,
             })
+            last_assistant_idx = len(data["messages"]) - 1
             all_artifacts.extend(saved_artifacts)
 
         data["updated_at"] = now
@@ -162,7 +169,20 @@ class SessionManager:
         if total_chars > MAX_CONTEXT_TOKENS * 4 * COMPRESSION_TRIGGER:
             asyncio.create_task(self._compress(session_id, data))
 
-        return all_artifacts
+        return all_artifacts, last_assistant_idx
+
+    def update_message_feedback(
+        self,
+        session_id: str,
+        msg_index: int,
+        rating: str,
+        comment: str | None,
+    ) -> None:
+        """Write feedback to a specific message in the session file (atomic write)."""
+        data = self._load_raw(session_id)
+        data["messages"][msg_index]["feedback"] = {"rating": rating, "comment": comment}
+        data["updated_at"] = time.time()
+        self._save(session_id, data)
 
     def update_title(self, session_id: str, title: str) -> None:
         data = self._load_raw(session_id)

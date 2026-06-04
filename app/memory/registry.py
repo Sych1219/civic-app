@@ -17,18 +17,22 @@ class HintRegistry:
     def __init__(self, client: MemoryClient):
         self._client = client
 
-    async def submit(self, agent: str, candidate: str) -> None:
+    async def submit(self, agent: str, candidate: str, force_active: bool = False) -> None:
         existing = await self._find_similar(agent, candidate)
         if existing:
             new_count = existing["seenCount"] + 1
             updates: dict = {"seen_count": new_count}
-            if existing["status"] == "pending" and new_count >= CONFIDENCE_THRESHOLD:
+            if force_active:
+                updates["status"] = "active"
+                logger.info("[memory] hint force-activated from user feedback: %.80s", existing["body"])
+            elif existing["status"] == "pending" and new_count >= CONFIDENCE_THRESHOLD:
                 updates["status"] = "active"
                 logger.info("[memory] hint promoted to active: %.80s", existing["body"])
             await self._client.update_hint(existing["id"], **updates)
         else:
             embedding = await embed(candidate)
-            await self._client.insert_hint(agent, candidate, embedding)
+            status = "active" if force_active else "pending"
+            await self._client.insert_hint(agent, candidate, embedding, status=status)
 
     async def get_active_hints(self, agent: str, question: str) -> list[str]:
         active = await self._client.get_hints(agent, status="active")

@@ -1,0 +1,39 @@
+{
+  "view_type": "corridor",
+  "cameras": [
+    {
+      "cameraId": 4799,
+      "locationName": null,
+      "latitude": 1.26027777363278,
+      "longitude": 103.823888890049,
+      "latestImage": "https://images.data.gov.sg/api/traffic-images/2026/06/46e1413b-05c5-4c3b-bd58-9f048e314a96.jpg",
+      "timestamp": "2026-06-02T07:41:09Z",
+      "resolution": "HD",
+      "analysis": {
+        "congestion": "free_flow",
+        "vehicleDensity": "sparse",
+        "incidents": "none",
+        "weather": "clear",
+        "roadSurface": "dry",
+        "summary": "The traffic is flowing freely with few vehicles on the road under clear weather conditions."
+      }
+    },
+    {
+      "cameraId": 4798,
+      "locationName": null,
+      "latitude": 1.25999999687243,
+      "longitude": 103.823611110166,
+      "latestImage": "https://images.data.gov.sg/api/traffic-images/2026/06/c90b66ac-749d-47c2-bea5-b87d654d4fcf.jpg",
+      "timestamp": "2026-06-02T07:41:09Z",
+      "resolution": "HD",
+      "analysis": {
+        "congestion": "free_flow",
+        "vehicleDensity": "normal",
+        "incidents": "none",
+        "weather": "clear",
+        "roadSurface": "dry",
+        "summary": "The traffic is flowing freely with a normal density of vehicles on a clear day."
+      }
+    }
+  ]
+}
